@@ -26,7 +26,7 @@ function Login() {
             <input type="password" placeholder="Contraseña" onChange={e => setPassword(e.target.value)} />
             <button onClick={handleLogin}>Entrar</button>
             <p><Link to="/register">¿No tienes cuenta? Registrate</Link></p>
-            <p><Link to="/forgot-password">¿Olvidaste tu constraseña?</Link></p>
+            <p><Link to="/ForgotPassword">¿Olvidaste tu constraseña?</Link></p>
         </div>
     )
 }

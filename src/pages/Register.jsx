@@ -42,11 +42,11 @@ function Register() {
         <div>
             <h1>Registro</h1>
             {error && <p style={{ color: 'red' }}>{error}</p>}
-            <input type="text" placeholder="Username" onChange={e => setUsername(e.target.value)} />
-            <input type="email" placeholder="Email" onChange={e => setEmail(e.target.value)} />
+            <input type="text" placeholder="Ingresa tu nickname" onChange={e => setUsername(e.target.value)} />
+            <input type="email" placeholder="Correo electronico" onChange={e => setEmail(e.target.value)} />
             <input type="password" placeholder="Contraseña" onChange={e => setPassword(e.target.value)} />
-            <button onClick={handleRegister}>Registrarse</button>
-            <p><Link to="/">¿Ya tienes cuenta? Inicia sesión</Link></p>
+            <button onClick={handleRegister}>Crear usuario</button>
+            <p><Link to="/">¿Ya tienes cuenta? Inicia sesión en velochat</Link></p>
         </div>
     )
 }
