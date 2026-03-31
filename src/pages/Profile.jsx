@@ -10,6 +10,7 @@ function Profile(){
     const [bio, setBio] = useState('')
     const [message, setMessage] = useState('')
     const navigate = useNavigate()
+    const [editing, setEditing] = useState(false)
 
     useEffect(()=>{
         getProfile()
@@ -32,19 +33,19 @@ function Profile(){
         if (data) {
             setProfile(data)
             setUsername(data.username || '')
-            setFullName(data.fullName || '')
+            setFullName(data.full_name || '')
             setBio(data.bio || '')
         }
         setLoading(false)
     }
     const updateProfile = async () => {
         const {data: {user}} =await supabase.auth.getUser()
-
         const {error} = await supabase
         .from('profiles')
         .update({
             username,
             full_name:fullName,
+            bio: bio,
         })
         .eq('id',user.id)
         if (error) {
@@ -61,30 +62,25 @@ function Profile(){
             <h1>Mi perfil</h1>
             {message && <p style={{color: 'green'}}>{message}</p>}
             <div>
-                <label>Username</label>
-                <input 
-                type="text" 
-                value={username}
-                onChange={e=>setUsername(e.target.value)}
-                />
+                <label>Username </label>
+                <input type="text" value={username} onChange={e=>setUsername(e.target.value)} disabled={!editing}/>
             </div>
             <div>
-                <label>Nombre completo</label>
-                <input 
-                type="text" 
-                name={fullName}
-                onChange={e=>setFullName(e.target.value)}
-                />
+                <label>Nombre completo </label>
+                <input type="text" value={fullName} onChange={e=>setFullName(e.target.value)} disabled={!editing}/>
             </div>
             <div>
-                <label>Bio</label>
-                <input 
-                type="text" 
-                name={bio} 
-                onChange={e=>setBio(e.target.value)}
-                />
+                <label>Biografia </label>
+                <input type="text" value={bio} onChange={e=>setBio(e.target.value)} disabled={!editing}/>
             </div>
-            <button onClick={updateProfile}>Guardar cambios</button>
+            {editing ? (
+                <>
+                <button onClick={updateProfile}>Guardar cambios</button>
+                <button onClick={()=>setEditing(false)}>Cancelar cambios</button>
+                </>
+            ) :(
+                <button onClick={()=>setEditing(true)}>Editar perfil</button>
+            ) }
             <button onClick={()=>navigate('/home')}>Regresar a Home</button>
         </div>
     )

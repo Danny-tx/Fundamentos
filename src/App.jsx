@@ -5,6 +5,8 @@ import ForgotPassword from './pages/ForgotPassword'
 import Home from './pages/Home'
 import ProtectedRoute from './components/auth/ProtectedRoute'
 import Profile from './pages/Profile'
+import Conversations from './pages/Conversations'
+import Contacts from './pages/Contacts'
 
 function App() {
   return (
@@ -20,6 +22,16 @@ function App() {
       <Route path="/profile" element={
       <ProtectedRoute>
       <Profile />
+      </ProtectedRoute>
+      } />
+      <Route path="/conversations" element={
+      <ProtectedRoute>
+      <Conversations />
+      </ProtectedRoute>
+      } />
+      <Route path="/contacts" element={
+      <ProtectedRoute>
+      <Contacts />
       </ProtectedRoute>
       } />
     </Routes>
