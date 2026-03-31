@@ -68,6 +68,11 @@ const sendRequest = async () => {
         .eq('addressee_id', searchResult.id)
         .single()
 
+    if (existing) {
+        setMessage('Ya enviaste una solicitud a este usuario')
+        return
+    }
+
     const { error } = await supabase
         .from('contacts')
         .insert({
@@ -75,11 +80,6 @@ const sendRequest = async () => {
             addressee_id: searchResult.id,
             status: 'pending'
         })
-    
-    if (existing) {
-        setMessage('Ya enviaste una solicitud a este usuario')
-        return
-    }
 
     if (error) {
         console.log('Error exacto:', error)
@@ -94,12 +94,16 @@ const sendRequest = async () => {
 const getRequests = async () => {
     const { data: { user } } = await supabase.auth.getUser()
 
+    if (!user) return
+
     const { data, error } = await supabase
         .from('contacts')
         .select('status, requester_id')
         .eq('addressee_id', user.id)
         .eq('status', 'pending')
 
+    console.log('requests error:', error)
+    console.log('requests data:', data)
     if (data) {
         //buscara el perfil de cada usuario que envio la solicitud
         const requestsWithProfiles = await Promise.all(
@@ -132,7 +136,9 @@ const acceptRequest = async (requesterId) => {
     }
 }
 const rejectRequest = async (requesterId) => {
-    const { data: { user } } = await supabase.auth.getUser
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) return
 
     const { error } = await supabase
         .from('contacts')
@@ -140,7 +146,11 @@ const rejectRequest = async (requesterId) => {
         .eq('requester_id', requesterId)
         .eq('addressee_id', user.id)
 
-    if (!error){
+    console.log('reject error:', error)
+
+    if (error) {
+        setMessage('Error: ' + error.message)
+    } else {
         setMessage('Solicitud rechazada')
         getRequests()
     }

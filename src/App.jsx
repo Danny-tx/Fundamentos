@@ -7,6 +7,7 @@ import ProtectedRoute from './components/auth/ProtectedRoute'
 import Profile from './pages/Profile'
 import Conversations from './pages/Conversations'
 import Contacts from './pages/Contacts'
+import ResetPassword from './pages/ResetPassword'
 
 function App() {
   return (
@@ -34,6 +35,7 @@ function App() {
       <Contacts />
       </ProtectedRoute>
       } />
+      <Route path="/reset-password" element={<ResetPassword/>} />
     </Routes>
   )
 }

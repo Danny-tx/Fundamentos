@@ -8,6 +8,6 @@ export const supabase = createClient(supabaseUrl,supabaseKey, {
         storage: localStorage,
         autoRefreshToken: true,
         persistSession: true,
-        detectSessionInUrl: false,
+        detectSessionInUrl: true,
     }
 });
