@@ -43,7 +43,7 @@ function Profile(){
         const {error} = await supabase
         .from('profiles')
         .update({
-            username,
+            username:username,
             full_name:fullName,
             bio: bio,
         })
@@ -76,11 +76,12 @@ function Profile(){
             {editing ? (
                 <>
                 <button onClick={updateProfile}>Guardar cambios</button>
-                <button onClick={()=>setEditing(false)}>Cancelar cambios</button>
+                <button onClick={()=>setEditing(false)}>Cerrar</button>
                 </>
             ) :(
                 <button onClick={()=>setEditing(true)}>Editar perfil</button>
             ) }
+            <p></p>
             <button onClick={()=>navigate('/home')}>Regresar a Home</button>
         </div>
     )

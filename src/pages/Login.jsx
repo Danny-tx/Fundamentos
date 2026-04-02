@@ -21,7 +21,7 @@ function Login() {
     return(
         <div>
             <h1>Mi primer login :D</h1>
-            {error && <p style={{color: 'red' }} >{error}</p>}
+            {error && <p style={{color: 'red' }} >{ error}</p>}
             <input type="email" placeholder="Email" onChange={e => setEmail(e.target.value)} />
             <input type="password" placeholder="Contraseña" onChange={e => setPassword(e.target.value)} />
             <button onClick={handleLogin}>Entrar</button>
