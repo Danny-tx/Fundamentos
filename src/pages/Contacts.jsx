@@ -102,8 +102,6 @@ const getRequests = async () => {
         .eq('addressee_id', user.id)
         .eq('status', 'pending')
 
-    console.log('requests error:', error)
-    console.log('requests data:', data)
     if (data) {
         //buscara el perfil de cada usuario que envio la solicitud
         const requestsWithProfiles = await Promise.all(
