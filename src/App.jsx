@@ -8,6 +8,8 @@ import Profile from './pages/Profile'
 import Conversations from './pages/Conversations'
 import Contacts from './pages/Contacts'
 import ResetPassword from './pages/ResetPassword'
+import NewConversation from './pages/NewConversations'
+import Chat from './pages/Chat'
 
 function App() {
   return (
@@ -35,8 +37,14 @@ function App() {
       <Contacts />
       </ProtectedRoute>
       } />
+      <Route path="/chat/:id" element={<ProtectedRoute><Chat /></ProtectedRoute>} />
+      <Route path="/new-conversations" element={
+      <ProtectedRoute>
+      <NewConversation />
+      </ProtectedRoute>
+      } />
       <Route path="/reset-password" element={<ResetPassword/>} />
-    </Routes>
+      </Routes>
   )
 }
 
