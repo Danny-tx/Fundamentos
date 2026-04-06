@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { useNavigate } from "react-router-dom";
 
@@ -6,31 +6,41 @@ function Conversations() {
     const [conversations, setConversations] = useState([])
     const [loading, setLoading] = useState(true)
     const navigate = useNavigate()
+    const channelRef = useRef(null)
 
     useEffect(() => {
-        getConversations()
+        let channel
+
+        const run = async() => {
+            await getConversations()
+            setLoading(false)
+
+            channel = supabase
+            .channel('conversations-list', {
+                config: {
+                    broadcast: {self: true}
+                }
+            })
+            .on('broadcast', {event: 'new_message'}, async() => {
+                await getConversations()
+            })
+            .subscribe((status) => {
+            })
+            channelRef.current = channel
+        }
+        run()
+        return () => {
+            if (channel) supabase.removeChannel(channel)
+        }
     }, [])
 
     const getConversations = async () => {
-        const { data: { user } } = await supabase.auth.getUser()
-
         const { data, error } = await supabase
-            .from('conversation_participants')
-            .select(`
-                conversation_id,
-                conversations (
-                    id,
-                    name,
-                    type,
-                    updated_at
-                )
-            `)
-            .eq('user_id', user.id)
+            .rpc('get_conversations')
 
         if (data) {
             setConversations(data)
         }
-        setLoading(false)
     }
 
     if (loading) return <p>Cargando...</p>
@@ -42,12 +52,14 @@ function Conversations() {
                 <p>Aún no hay conversaciones</p>
             ) : (
                 conversations.map((item) => (
-                    <div key={item.conversation_id}>
-                        <p>{item.conversations.name || 'Sin nombre'}</p>
-                        <p>{item.conversations.type}</p>
+                    <div key={item.conversation_id} onClick={() => navigate(`/chat/${item.conversation_id}`)} style={{cursor: 'pointer', borderBottom: '1px solid gray', padding: '2px'}}>
+                        <p style={{ margin: 0, fontWeight: 'bold' }}>{item.name || 'Sin nombre'}</p>
+                        <p style={{margin: 0, fontSize: '13px', color: 'gray'}}>{item.last_message || 'Sin mensajes'}</p>
                     </div>
                 ))
             )}
+            <button onClick={() => navigate('/new-conversations')}>Nueva conversacion</button>
+            <p></p>
             <button onClick={() => navigate('/home')}>Regresar a Home</button>
         </div>
     )
