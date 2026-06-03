@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef } from "react";
 import { supabase } from "../lib/supabase";
 import { useNavigate } from "react-router-dom";
+import useMutedConversations from "../hooks/useMutedConversations";
 
 function Conversations() {
     const [conversations, setConversations] = useState([])
@@ -8,6 +9,7 @@ function Conversations() {
     const [menuOpen, setMenuOpen] = useState(null)
     const navigate = useNavigate()
     const channelRef = useRef(null)
+    const { isMuted } = useMutedConversations()
 
     useEffect(() => {
         let channel
@@ -64,7 +66,10 @@ function Conversations() {
                 conversations.map((item) => (
                     <div key={item.conversation_id} style={{ borderBottom: '1px solid gray', padding: '2px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div key={item.conversation_id} onClick={() => navigate(`/chat/${item.conversation_id}`)} style={{cursor: 'pointer', borderBottom: '1px solid gray', padding: '2px'}}>
-                            <p style={{ margin: 0, fontWeight: 'bold' }}>{item.name || 'Sin nombre'}</p>
+                            <p style={{ margin: 0, fontWeight: 'bold' }}>
+                                {item.name || 'Sin nombre'}
+                                {isMuted(item.conversation_id) && <span style={{ fontSize: '12px', color: '#888', marginLeft: '6px' }}>🔕</span>}
+                            </p>
                             <p style={{margin: 0, fontSize: '13px', color: 'gray'}}>{item.last_message || 'Sin mensajes'}</p>
                         </div>
                         <div style={{position: 'relative'}}>

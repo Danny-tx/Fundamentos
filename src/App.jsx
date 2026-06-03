@@ -10,9 +10,13 @@ import Conversations from './pages/Conversations'
 import Contacts from './pages/Contacts'
 import NewConversation from './pages/NewConversations'
 import Chat from './pages/Chat'
+import ChangePassword from './pages/ChangePassword'
+import OfflineIndicator from './components/OfflineIndicator'
 
 function App() {
   return (
+    <>
+    <OfflineIndicator />
     <Routes>
       <Route path="/" element={<Login />} />
       <Route path="/Register" element={<Register />} />
@@ -44,7 +48,13 @@ function App() {
       </ProtectedRoute>
       } /> 
       <Route path="/reset-password" element={<ResetPassword/>} />
+      <Route path="/change-password" element={
+        <ProtectedRoute>
+          <ChangePassword />
+        </ProtectedRoute>
+      } />
       </Routes>
+    </>
   )
 }
 

@@ -82,6 +82,8 @@ function Profile(){
                 <button onClick={()=>setEditing(true)}>Editar perfil</button>
             ) }
             <p></p>
+            <button onClick={()=>navigate('/change-password')}>Cambiar contraseña</button>
+            <p></p>
             <button onClick={()=>navigate('/home')}>Regresar a Home</button>
         </div>
     )
