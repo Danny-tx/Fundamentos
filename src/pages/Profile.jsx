@@ -28,7 +28,7 @@ function Profile(){
         .from('profiles')
         .select('*')
         .eq('id',user.id)
-        .single()
+        .maybeSingle()  // ← esto evita el 406
 
         if (data) {
             setProfile(data)
