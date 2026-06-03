@@ -68,6 +68,11 @@ const sendRequest = async () => {
         .eq('addressee_id', searchResult.id)
         .single()
 
+    if (existing) {
+        setMessage('Ya enviaste una solicitud a este usuario')
+        return
+    }
+
     const { error } = await supabase
         .from('contacts')
         .insert({
@@ -75,11 +80,6 @@ const sendRequest = async () => {
             addressee_id: searchResult.id,
             status: 'pending'
         })
-    
-    if (existing) {
-        setMessage('Ya enviaste una solicitud a este usuario')
-        return
-    }
 
     if (error) {
         console.log('Error exacto:', error)
@@ -93,6 +93,8 @@ const sendRequest = async () => {
 }
 const getRequests = async () => {
     const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) return
 
     const { data, error } = await supabase
         .from('contacts')
@@ -125,14 +127,31 @@ const acceptRequest = async (requesterId) => {
         .eq('requester_id', requesterId)
         .eq('addressee_id', user.id)
 
-    if (!error) {
-        setMessage('Solicitud aceptada')
+    if (error) {
+        setMessage('Error al aceptar solicitud')
+        return
+    }
+
+    const { error: inverseError } = await supabase
+        .from('contacts')
+        .insert({
+            requester_id: user.id,
+            addressee_id: requesterId,
+            status: 'accepted'
+        })
+
+    if (!inverseError) {
+        setMessage('Solicitud aceptada!')
         getRequests()
         getContacts()
     }
 }
+// Se crea el contacto inverso (Antes solo aparecia amigos en un solo perfil, no en ambos)
+
 const rejectRequest = async (requesterId) => {
-    const { data: { user } } = await supabase.auth.getUser
+    const { data: { user } } = await supabase.auth.getUser()
+
+    if (!user) return
 
     const { error } = await supabase
         .from('contacts')
@@ -140,7 +159,11 @@ const rejectRequest = async (requesterId) => {
         .eq('requester_id', requesterId)
         .eq('addressee_id', user.id)
 
-    if (!error){
+    console.log('reject error:', error)
+
+    if (error) {
+        setMessage('Error: ' + error.message)
+    } else {
         setMessage('Solicitud rechazada')
         getRequests()
     }
@@ -186,7 +209,6 @@ return (
                 ) : (
                     contacts.map((item) => (
                         <div key={item.addressee_id}>
-                            <p>Username - Nombre</p>
                             <p>{item.profile?.username} - {item.profile?.full_name}</p>
                         </div>
                     ))
