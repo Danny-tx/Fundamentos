@@ -1,7 +1,6 @@
 import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import { supabase } from "../lib/supabase"
-import { useTheme } from "../context/ThemeContext"
 
 function Contacts() {
     const [contacts, setContacts] = useState([])
@@ -12,9 +11,7 @@ function Contacts() {
     const [requests, setRequests] = useState([])
     const [deleteConfirm, setDeleteConfirm] = useState(null)
     const navigate = useNavigate()
-    const { dark } = useTheme()
-
-    const t = dark ? tokens.dark : tokens.light
+    const t = tokens
 
     useEffect(() => { getContacts(); getRequests() }, [])
 
@@ -225,14 +222,14 @@ function Contacts() {
 }
 
 const tokens = {
-    dark: {
-        bg: '#0f0f10', header: '#111113', card: '#18181b', surface: '#1c1c1f',
-        border: '#2e2e33', text: '#f4f4f5', muted: '#71717a', input: '#18181b'
-    },
-    light: {
-        bg: '#f4f4f5', header: '#ffffff', card: '#ffffff', surface: '#f4f4f5',
-        border: '#e4e4e7', text: '#09090b', muted: '#71717a', input: '#ffffff'
-    }
+    bg: '#0f0f10',
+    header: '#111113',
+    card: '#18181b',
+    surface: '#1c1c1f',
+    border: '#2e2e33',
+    text: '#f4f4f5',
+    muted: '#71717a',
+    input: '#18181b',
 }
 const googleFont = `@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');`
 const scrollbarCss = `::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#2e2e33;border-radius:4px}`
