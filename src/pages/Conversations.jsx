@@ -2,7 +2,6 @@ import { useState, useEffect, useRef } from "react"
 import { supabase } from "../lib/supabase"
 import { useNavigate } from "react-router-dom"
 import useMutedConversations from "../hooks/useMutedConversations"
-import { useTheme } from "../context/ThemeContext"
 
 function Conversations() {
     const [conversations, setConversations] = useState([])
@@ -12,8 +11,7 @@ function Conversations() {
     const navigate = useNavigate()
     const channelRef = useRef(null)
     const { isMuted } = useMutedConversations()
-    const { dark, toggle } = useTheme()
-    const t = dark ? tokens.dark : tokens.light
+    const t = tokens
 
     useEffect(() => {
         let channel
@@ -76,10 +74,6 @@ function Conversations() {
             <div style={{ background: t.header, borderBottom: `1px solid ${t.border}`, padding: '16px 24px', display: 'flex', alignItems: 'center', gap: '12px' }}>
                 <button onClick={() => navigate('/home')} style={{ background: t.surface, border: `1px solid ${t.border}`, color: t.muted, borderRadius: '10px', padding: '7px 14px', cursor: 'pointer', fontSize: '14px', fontFamily: 'inherit', fontWeight: 500 }}>← Inicio</button>
                 <h1 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: t.text, flex: 1 }}>Conversaciones</h1>
-                {/* #15 — Toggle modo oscuro */}
-                <button onClick={toggle} title={dark ? 'Modo claro' : 'Modo oscuro'} style={{ background: t.surface, border: `1px solid ${t.border}`, color: t.text, borderRadius: '10px', padding: '7px 12px', cursor: 'pointer', fontSize: '16px' }}>
-                    {dark ? '☀️' : '🌙'}
-                </button>
                 <button onClick={() => navigate('/new-conversations')} style={{ padding: '8px 16px', borderRadius: '10px', border: 'none', background: '#3b82f6', color: 'white', cursor: 'pointer', fontSize: '14px', fontFamily: 'inherit', fontWeight: 600 }}>+ Nueva</button>
             </div>
 
@@ -143,10 +137,7 @@ function Conversations() {
     )
 }
 
-const tokens = {
-    dark: { bg: '#0f0f10', header: '#111113', card: '#18181b', surface: '#1c1c1f', border: '#2e2e33', text: '#f4f4f5', muted: '#71717a' },
-    light: { bg: '#f4f4f5', header: '#ffffff', card: '#ffffff', surface: '#f4f4f5', border: '#e4e4e7', text: '#09090b', muted: '#71717a' }
-}
+const tokens = { bg: '#0f0f10', header: '#111113', card: '#18181b', surface: '#1c1c1f', border: '#2e2e33', text: '#f4f4f5', muted: '#71717a' }
 const googleFont = `@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');`
 const scrollbarCss = `::-webkit-scrollbar{width:4px}::-webkit-scrollbar-thumb{background:#2e2e33;border-radius:4px}`
 

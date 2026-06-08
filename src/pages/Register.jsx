@@ -55,16 +55,98 @@ function Register() {
 }
 
     return (
-        <div>
-            <h1>Registro</h1>
-            {error && <p style={{ color: 'red' }}>{error}</p>}
-            <input type="text" placeholder="Ingresa tu nickname" onChange={e => setUsername(e.target.value)} />
-            <input type="email" placeholder="Correo electronico" onChange={e => setEmail(e.target.value)} />
-            <input type="password" placeholder="Contraseña" onChange={e => setPassword(e.target.value)} />
-            <button onClick={handleRegister}>Crear usuario</button>
-            <p><Link to="/">¿Ya tienes cuenta? Inicia sesión en velochat</Link></p>
+        <div style={ui.shell}>
+            <div style={ui.card}>
+                <h1 style={ui.title}>Crear cuenta</h1>
+                <p style={ui.subtitle}>Regístrate para empezar a chatear</p>
+
+                {error && <div style={ui.error}>{error}</div>}
+
+                <div style={ui.form}>
+                    <input
+                        type="text"
+                        placeholder="Ingresa tu nickname"
+                        onChange={e => setUsername(e.target.value)}
+                        style={ui.input}
+                    />
+                    <input
+                        type="email"
+                        placeholder="Correo electrónico"
+                        onChange={e => setEmail(e.target.value)}
+                        style={ui.input}
+                    />
+                    <input
+                        type="password"
+                        placeholder="Contraseña"
+                        onChange={e => setPassword(e.target.value)}
+                        style={ui.input}
+                    />
+                    <button onClick={handleRegister} style={ui.primaryButton}>Crear usuario</button>
+                </div>
+
+                <p style={{ marginTop: "18px" }}>
+                    <Link to="/" style={ui.link}>¿Ya tienes cuenta? Inicia sesión en Velochat</Link>
+                </p>
+            </div>
         </div>
     )
+}
+const ui = {
+    shell: {
+        minHeight: "100vh",
+        background: "#0f0f10",
+        color: "#f4f4f5",
+        fontFamily: "'DM Sans', sans-serif",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "20px",
+    },
+    card: {
+        width: "100%",
+        maxWidth: "440px",
+        background: "#18181b",
+        border: "1px solid #2e2e33",
+        borderRadius: "16px",
+        padding: "26px",
+        boxShadow: "0 18px 40px rgba(0,0,0,0.35)",
+    },
+    title: { margin: 0, fontSize: "24px", fontWeight: 700 },
+    subtitle: { margin: "8px 0 0", fontSize: "14px", color: "#71717a" },
+    form: { marginTop: "18px", display: "flex", flexDirection: "column", gap: "12px" },
+    input: {
+        width: "100%",
+        padding: "11px 14px",
+        borderRadius: "10px",
+        border: "1px solid #2e2e33",
+        background: "#111113",
+        color: "#f4f4f5",
+        outline: "none",
+        fontSize: "14px",
+        fontFamily: "inherit",
+        boxSizing: "border-box",
+    },
+    primaryButton: {
+        border: "none",
+        borderRadius: "10px",
+        background: "#3b82f6",
+        color: "white",
+        padding: "11px 14px",
+        cursor: "pointer",
+        fontSize: "14px",
+        fontWeight: 600,
+        fontFamily: "inherit",
+    },
+    error: {
+        marginTop: "14px",
+        background: "#2d0a0a",
+        border: "1px solid #7f1d1d",
+        color: "#f87171",
+        borderRadius: "10px",
+        padding: "10px 12px",
+        fontSize: "14px",
+    },
+    link: { color: "#60a5fa", fontSize: "14px", textDecoration: "none" },
 }
 
 export default Register
