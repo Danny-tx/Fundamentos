@@ -131,26 +131,51 @@ export default function CallModal({
   const [activeTab, setActiveTab]           = useState("bg")
   const [selectedBg, setSelectedBg]         = useState("none")
   const [selectedFilter, setSelectedFilter] = useState("none")
+  const [segReady, setSegReady]             = useState(false)
 
-  const remoteVideoRef  = useRef(null)
-  // Canvas principal — visible en el preview local (esquina inferior derecha)
-  // Chrome/Windows: captureStream() funciona aunque el canvas esté visible en pantalla
-  const canvasRef       = useRef(null)
-  const overlayRef      = useRef(null)
-  const pcRef           = useRef(null)
-  const localStreamRef  = useRef(null)
+  const remoteVideoRef   = useRef(null)
+  const canvasRef        = useRef(null)
+  const overlayRef       = useRef(null)
+  const segCanvasRef     = useRef(null)   // canvas para resultado de segmentación
+  const pcRef            = useRef(null)
+  const localStreamRef   = useRef(null)
   const signalChannelRef = useRef(null)
-  const timerRef        = useRef(null)
-  const animFrameRef    = useRef(null)
-  const bgImgRef        = useRef(null)
-  const bgRef           = useRef("none")
-  const filterRef       = useRef("none")
-  const rawVidRef       = useRef(null)
-  // Canvas auxiliar oculto para blur (bajo res)
-  const blurCvRef       = useRef(null)
+  const timerRef         = useRef(null)
+  const animFrameRef     = useRef(null)
+  const bgImgRef         = useRef(null)
+  const bgRef            = useRef("none")
+  const filterRef        = useRef("none")
+  const rawVidRef        = useRef(null)
+  const blurCvRef        = useRef(null)
+  const segmentationRef  = useRef(null)   // instancia MediaPipe SelfieSegmentation
+  const segMaskRef       = useRef(null)   // último mask recibido del modelo
+  const segReadyRef      = useRef(false)
 
   const isVideo = mode === "video"
   const fmtTime = s => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`
+
+  /* ── Inicializar MediaPipe SelfieSegmentation ── */
+  const initSegmentation = useCallback(async () => {
+    try {
+      const { SelfieSegmentation } = await import("@mediapipe/selfie_segmentation")
+      const seg = new SelfieSegmentation({
+        locateFile: (file) => `/selfie_segmentation_solution_wasm_bin.wasm`.includes(file)
+          ? `/${file}`
+          : `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
+      })
+      seg.setOptions({ modelSelection: 1, selfieMode: true })
+      seg.onResults((results) => {
+        segMaskRef.current = results.segmentationMask
+      })
+      await seg.initialize()
+      segmentationRef.current = seg
+      segReadyRef.current = true
+      setSegReady(true)
+    } catch(err) {
+      console.warn("MediaPipe SelfieSegmentation no disponible, usando modo fallback:", err)
+      segReadyRef.current = false
+    }
+  }, [])
 
   /* ── Señalización ── */
   const getSignalChannel = () => {
@@ -203,7 +228,77 @@ export default function CallModal({
   const changeBg     = (id) => { setSelectedBg(id);     bgRef.current = id;     loadBgImage(id) }
   const changeFilter = (id) => { setSelectedFilter(id); filterRef.current = id }
 
-  /* ── Loop canvas ── */
+  /* ── Dibujar fondo + silueta (con segmentación real) ── */
+  const drawWithSegmentation = (ctx, segCanvas, vid, W, H, bgDef, fid) => {
+    const mask = segMaskRef.current
+
+    // 1. Dibujar fondo en el canvas de segmentación temporal
+    const segCtx = segCanvas.getContext("2d")
+    segCtx.clearRect(0, 0, W, H)
+
+    if (bgDef.type === "blur") {
+      // Fondo borroso: escalar video a resolución baja y luego ampliar
+      const blurCv = blurCvRef.current
+      const blurCtx = blurCv.getContext("2d")
+      blurCtx.save()
+      blurCtx.translate(blurCv.width, 0); blurCtx.scale(-1, 1)
+      blurCtx.drawImage(vid, 0, 0, blurCv.width, blurCv.height)
+      blurCtx.restore()
+      segCtx.drawImage(blurCv, 0, 0, blurCv.width, blurCv.height, 0, 0, W, H)
+    } else if (bgDef.type === "color") {
+      segCtx.fillStyle = bgDef.color
+      segCtx.fillRect(0, 0, W, H)
+    } else if (bgDef.type === "image" && bgImgRef.current) {
+      segCtx.drawImage(bgImgRef.current, 0, 0, W, H)
+    } else if (bgDef.type === "image") {
+      // Imagen aún cargando
+      segCtx.fillStyle = "#111"
+      segCtx.fillRect(0, 0, W, H)
+    }
+
+    // 2. Si tenemos máscara de segmentación, componer persona sobre fondo
+    if (mask) {
+      // Guardar el fondo ya dibujado
+      const bgData = segCtx.getImageData(0, 0, W, H)
+
+      // Dibujar video (persona) con filtro en segCanvas
+      segCtx.save()
+      segCtx.translate(W, 0); segCtx.scale(-1, 1)
+      applyCanvasFilter(segCtx, vid, W, H, fid)
+      segCtx.restore()
+      const personData = segCtx.getImageData(0, 0, W, H)
+
+      // Usar la máscara para mezclar: persona donde máscara=blanco, fondo donde máscara=negro
+      // Necesitamos leer la máscara desde un canvas auxiliar
+      const maskCanvas = document.createElement("canvas")
+      maskCanvas.width = W; maskCanvas.height = H
+      const maskCtx = maskCanvas.getContext("2d")
+      maskCtx.drawImage(mask, 0, 0, W, H)
+      const maskData = maskCtx.getImageData(0, 0, W, H)
+
+      const output = ctx.createImageData(W, H)
+      for (let i = 0; i < output.data.length; i += 4) {
+        // El canal rojo de la máscara indica si es persona (255) o fondo (0)
+        const alpha = maskData.data[i] / 255
+        // Suavizar el borde con un pequeño threshold
+        const smoothAlpha = Math.min(1, Math.max(0, (alpha - 0.1) / 0.8))
+        output.data[i]   = personData.data[i]   * smoothAlpha + bgData.data[i]   * (1 - smoothAlpha)
+        output.data[i+1] = personData.data[i+1] * smoothAlpha + bgData.data[i+1] * (1 - smoothAlpha)
+        output.data[i+2] = personData.data[i+2] * smoothAlpha + bgData.data[i+2] * (1 - smoothAlpha)
+        output.data[i+3] = 255
+      }
+      ctx.putImageData(output, 0, 0)
+    } else {
+      // Sin máscara aún: dibujar fondo + persona encima (degradado temporal)
+      ctx.drawImage(segCanvas, 0, 0)
+      ctx.save()
+      ctx.translate(W, 0); ctx.scale(-1, 1)
+      applyCanvasFilter(ctx, vid, W, H, fid)
+      ctx.restore()
+    }
+  }
+
+  /* ── Loop canvas principal ── */
   const startCanvasLoop = useCallback(async (rawStream) => {
     const canvas  = canvasRef.current
     const overlay = overlayRef.current
@@ -213,16 +308,20 @@ export default function CallModal({
     canvas.width  = W; canvas.height  = H
     if (overlay) { overlay.width = W; overlay.height = H }
 
+    // Canvas para segmentación compuesta
+    const segCanvas = document.createElement("canvas")
+    segCanvas.width = W; segCanvas.height = H
+    segCanvasRef.current = segCanvas
+
     const ctx  = canvas.getContext("2d")
     const octx = overlay?.getContext("2d")
 
-    // Canvas auxiliar de baja res para efecto blur
+    // Canvas de baja resolución para efecto blur
     const blurCv = document.createElement("canvas")
     blurCv.width = 80; blurCv.height = 60
     blurCvRef.current = blurCv
-    const blurCtx = blurCv.getContext("2d")
 
-    // Video element oculto que consume el rawStream
+    // Video oculto que consume el rawStream
     const vid = document.createElement("video")
     vid.srcObject  = rawStream
     vid.autoplay   = true
@@ -234,6 +333,22 @@ export default function CallModal({
       vid.onloadedmetadata = () => { vid.play().then(res).catch(res) }
       if (vid.readyState >= 2) vid.play().then(res).catch(res)
     })
+
+    // Iniciar segmentación en paralelo (no bloquea el loop)
+    initSegmentation()
+
+    // Enviar frames al modelo de segmentación periódicamente
+    let segFrameCount = 0
+    const sendToSeg = async () => {
+      if (segmentationRef.current && segReadyRef.current && vid.readyState >= 2) {
+        const bg = bgRef.current
+        if (bg !== "none") {
+          try {
+            await segmentationRef.current.send({ image: vid })
+          } catch(_) {}
+        }
+      }
+    }
 
     const drawFrame = () => {
       if (!canvasRef.current) return
@@ -252,44 +367,35 @@ export default function CallModal({
         ctx.translate(W, 0); ctx.scale(-1, 1)
         applyCanvasFilter(ctx, vid, W, H, fid)
         ctx.restore()
-      } else if (bg === "blur") {
-        // Fondo: versión pixelada (escala baja→alta = blur)
-        blurCtx.save()
-        blurCtx.translate(blurCv.width, 0); blurCtx.scale(-1, 1)
-        blurCtx.drawImage(vid, 0, 0, blurCv.width, blurCv.height)
-        blurCtx.restore()
-        // Escalar de 80x60 a 640x480 — esto crea el desenfoque
-        ctx.drawImage(blurCv, 0, 0, blurCv.width, blurCv.height, 0, 0, W, H)
-        // Video encima con 80% opacidad para ver la persona sobre el blur
-        ctx.save()
-        ctx.globalAlpha = 0.85
-        ctx.translate(W, 0); ctx.scale(-1, 1)
-        applyCanvasFilter(ctx, vid, W, H, fid)
-        ctx.restore()
-        ctx.globalAlpha = 1
-      } else if (bgDef?.type === "color") {
-        // Fondo de color sólido
-        ctx.fillStyle = bgDef.color
-        ctx.fillRect(0, 0, W, H)
-        // Video espejado encima
-        ctx.save()
-        ctx.translate(W, 0); ctx.scale(-1, 1)
-        applyCanvasFilter(ctx, vid, W, H, fid)
-        ctx.restore()
-      } else if (bgDef?.type === "image") {
-        if (bgImgRef.current) {
-          // Imagen de fondo cargada
-          ctx.drawImage(bgImgRef.current, 0, 0, W, H)
+      } else {
+        // Con fondo: usar segmentación si está disponible
+        if (segReadyRef.current && segCanvasRef.current) {
+          drawWithSegmentation(ctx, segCanvasRef.current, vid, W, H, bgDef, fid)
         } else {
-          // Imagen aún cargando: fondo negro mientras tanto
-          ctx.fillStyle = "#111"
-          ctx.fillRect(0, 0, W, H)
+          // Fallback sin segmentación: fondo + video encima (comportamiento original mejorado)
+          if (bgDef?.type === "blur") {
+            const blurCtx = blurCvRef.current.getContext("2d")
+            blurCtx.save()
+            blurCtx.translate(blurCvRef.current.width, 0); blurCtx.scale(-1, 1)
+            blurCtx.drawImage(vid, 0, 0, blurCvRef.current.width, blurCvRef.current.height)
+            blurCtx.restore()
+            ctx.drawImage(blurCvRef.current, 0, 0, blurCvRef.current.width, blurCvRef.current.height, 0, 0, W, H)
+          } else if (bgDef?.type === "color") {
+            ctx.fillStyle = bgDef.color
+            ctx.fillRect(0, 0, W, H)
+          } else if (bgDef?.type === "image") {
+            if (bgImgRef.current) {
+              ctx.drawImage(bgImgRef.current, 0, 0, W, H)
+            } else {
+              ctx.fillStyle = "#111"
+              ctx.fillRect(0, 0, W, H)
+            }
+          }
+          ctx.save()
+          ctx.translate(W, 0); ctx.scale(-1, 1)
+          applyCanvasFilter(ctx, vid, W, H, fid)
+          ctx.restore()
         }
-        // Video espejado encima
-        ctx.save()
-        ctx.translate(W, 0); ctx.scale(-1, 1)
-        applyCanvasFilter(ctx, vid, W, H, fid)
-        ctx.restore()
       }
 
       // Overlay de cara (emojis/filtros animados)
@@ -299,16 +405,21 @@ export default function CallModal({
         ctx.drawImage(overlay, 0, 0)
       }
 
+      // Enviar frame al modelo cada ~3 frames (≈10fps para segmentación)
+      segFrameCount++
+      if (segFrameCount % 3 === 0 && bg !== "none") {
+        sendToSeg()
+      }
+
       animFrameRef.current = requestAnimationFrame(drawFrame)
     }
 
     drawFrame()
 
-    // Capturar stream desde canvas (30fps) + audio del stream original
     const processed = canvas.captureStream(30)
     rawStream.getAudioTracks().forEach(t => processed.addTrack(t))
     return processed
-  }, [])
+  }, [initSegmentation])
 
   /* ── Stream de cámara ── */
   const getLocalStream = async () => {
@@ -401,6 +512,10 @@ export default function CallModal({
   const hangUp = () => {
     clearInterval(timerRef.current)
     cancelAnimationFrame(animFrameRef.current)
+    if (segmentationRef.current) {
+      try { segmentationRef.current.close() } catch(_) {}
+      segmentationRef.current = null
+    }
     if (pcRef.current)         { pcRef.current.close(); pcRef.current = null }
     if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop())
     if (rawVidRef.current)     { rawVidRef.current.pause(); rawVidRef.current.srcObject = null }
@@ -428,6 +543,9 @@ export default function CallModal({
     return () => {
       clearInterval(timerRef.current)
       cancelAnimationFrame(animFrameRef.current)
+      if (segmentationRef.current) {
+        try { segmentationRef.current.close() } catch(_) {}
+      }
       if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t => t.stop())
       if (rawVidRef.current) { rawVidRef.current.pause(); rawVidRef.current.srcObject = null }
       if (pcRef.current) pcRef.current.close()
@@ -478,7 +596,7 @@ export default function CallModal({
         {isVideo && (
           <div style={{ position:"relative",width:"100%",borderRadius:"16px",overflow:"hidden",background:"#000",aspectRatio:"16/9" }}>
 
-            {/* Video remoto (la otra persona) — área principal */}
+            {/* Video remoto */}
             <video
               ref={remoteVideoRef}
               autoPlay
@@ -486,20 +604,21 @@ export default function CallModal({
               style={{ width:"100%",height:"100%",objectFit:"cover",display:"block" }}
             />
 
-            {/*
-              Canvas principal: muestra el video local procesado (con fondo/filtro aplicado).
-              Está en la esquina inferior derecha como preview local.
-              captureStream() lo lee para enviar al peer — funciona en Chrome/Windows
-              aunque el canvas esté visible en pantalla.
-            */}
+            {/* Preview local con canvas procesado */}
             <div style={{ position:"absolute",bottom:"12px",right:"12px",width:"120px",height:"90px",borderRadius:"12px",overflow:"hidden",border:"2px solid #27272a",background:"#111" }}>
               <canvas
                 ref={canvasRef}
                 style={{ width:"100%",height:"100%",objectFit:"cover",display:"block" }}
               />
+              {/* Indicador de segmentación activa */}
+              {selectedBg !== "none" && (
+                <div style={{ position:"absolute",top:"4px",left:"4px",fontSize:"9px",background:"rgba(0,0,0,0.6)",color:segReady?"#4ade80":"#fbbf24",padding:"1px 4px",borderRadius:"4px",fontFamily:"monospace" }}>
+                  {segReady ? "✓ seg" : "⏳ cargando..."}
+                </div>
+              )}
             </div>
 
-            {/* Canvas auxiliar de overlay (emojis), oculto — solo se usa internamente */}
+            {/* Canvas overlay (emojis), oculto */}
             <canvas
               ref={overlayRef}
               style={{ position:"absolute",top:0,left:0,width:"1px",height:"1px",opacity:0,pointerEvents:"none" }}
@@ -524,16 +643,24 @@ export default function CallModal({
             </div>
 
             {activeTab==="bg" && (
-              <div style={{ padding:"14px",display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"8px" }}>
-                {BACKGROUNDS.map(bg=>(
-                  <button key={bg.id} className="bg-tile" onClick={()=>changeBg(bg.id)} style={{ padding:"10px 4px",borderRadius:"10px",border:`2px solid ${selectedBg===bg.id?"#3b82f6":"#2e2e33"}`,background:selectedBg===bg.id?"rgba(59,130,246,0.12)":"#111113",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:"4px",transition:"border-color .15s" }}>
-                    {bg.type==="image"
-                      ? <div style={{ width:"40px",height:"28px",borderRadius:"6px",overflow:"hidden" }}><img src={bg.url} alt={bg.label} style={{ width:"100%",height:"100%",objectFit:"cover" }} /></div>
-                      : <span style={{ fontSize:"22px",lineHeight:1 }}>{bg.preview}</span>
-                    }
-                    <span style={{ fontSize:"11px",color:selectedBg===bg.id?"#93c5fd":"#71717a",fontWeight:500 }}>{bg.label}</span>
-                  </button>
-                ))}
+              <div>
+                {/* Aviso si segmentación aún cargando */}
+                {!segReady && selectedBg !== "none" && (
+                  <div style={{ padding:"8px 14px",background:"rgba(251,191,36,0.1)",borderBottom:"1px solid #2e2e33",fontSize:"11px",color:"#fbbf24",textAlign:"center" }}>
+                    ⏳ Cargando modelo de segmentación… el fondo aparecerá en unos segundos
+                  </div>
+                )}
+                <div style={{ padding:"14px",display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"8px" }}>
+                  {BACKGROUNDS.map(bg=>(
+                    <button key={bg.id} className="bg-tile" onClick={()=>changeBg(bg.id)} style={{ padding:"10px 4px",borderRadius:"10px",border:`2px solid ${selectedBg===bg.id?"#3b82f6":"#2e2e33"}`,background:selectedBg===bg.id?"rgba(59,130,246,0.12)":"#111113",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:"4px",transition:"border-color .15s" }}>
+                      {bg.type==="image"
+                        ? <div style={{ width:"40px",height:"28px",borderRadius:"6px",overflow:"hidden" }}><img src={bg.url} alt={bg.label} style={{ width:"100%",height:"100%",objectFit:"cover" }} /></div>
+                        : <span style={{ fontSize:"22px",lineHeight:1 }}>{bg.preview}</span>
+                      }
+                      <span style={{ fontSize:"11px",color:selectedBg===bg.id?"#93c5fd":"#71717a",fontWeight:500 }}>{bg.label}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
 
