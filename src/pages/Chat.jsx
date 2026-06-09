@@ -132,7 +132,7 @@ function Chat() {
     const [showPinned, setShowPinned] = useState(false)
 
     // Notificaciones
-    const [notifPermission, setNotifPermission] = useState(Notification.permission)
+    const [notifPermission, setNotifPermission] = useState(() => (typeof Notification !== 'undefined' ? Notification.permission : 'denied'))
 
     // Emoji picker
     const [showEmoji, setShowEmoji] = useState(false)
@@ -252,7 +252,7 @@ function Chat() {
     }, [messages])
 
     useEffect(() => {
-        if (Notification.permission === 'default') {
+        if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
             Notification.requestPermission().then(p => setNotifPermission(p))
         }
     }, [])
@@ -270,7 +270,7 @@ function Chat() {
     }, [showEmoji])
 
     const triggerNotification = (senderName, preview) => {
-        if (Notification.permission !== 'granted') return
+        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return
         if (document.visibilityState === 'visible') return
         new Notification(`Nuevo mensaje de ${senderName || 'alguien'}`, {
             body: preview || 'Tienes un nuevo mensaje',
@@ -475,20 +475,11 @@ function Chat() {
         if (msg.content?.startsWith('[foto]')) {
             const url = msg.content.slice(6) // quita exactamente '[foto]'
             return (
-                <span style={{ display: 'inline-block' }}>
-                    <img src={url} alt="📷 Foto"
-                        style={{ maxWidth: '220px', maxHeight: '260px', borderRadius: '10px', display: 'block', cursor: 'pointer' }}
-                        onClick={() => window.open(url, '_blank')}
-                        onError={e => {
-                            e.target.style.display = 'none'
-                            const fallback = e.target.parentElement?.querySelector('.foto-fallback')
-                            if (fallback) fallback.style.display = 'block'
-                        }}
-                    />
-                    <span className="foto-fallback" style={{ display: 'none', fontSize: '13px', color: '#71717a', fontStyle: 'italic' }}>
-                        📷 Imagen no disponible
-                    </span>
-                </span>
+                <img src={url} alt="📷 Foto"
+                    style={{ maxWidth: '220px', maxHeight: '260px', borderRadius: '10px', display: 'block', cursor: 'pointer' }}
+                    onClick={() => window.open(url, '_blank')}
+                    onError={e => { e.target.style.display='none'; const f = e.target.parentElement?.querySelector('.foto-fallback'); if(f) f.style.display='block' }}
+                />
             )
         }
         return <span>{msg.content}</span>
@@ -613,7 +604,7 @@ function Chat() {
                 </div>
 
                 {notifPermission !== 'granted' && (
-                    <button onClick={() => Notification.requestPermission().then(p => setNotifPermission(p))}
+                    <button onClick={() => typeof Notification !== 'undefined' && Notification.requestPermission().then(p => setNotifPermission(p))}
                         style={{ fontSize: '12px', padding: '6px 10px', background: '#1c1c1f', border: '1px solid #2e2e33', color: '#71717a', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
                         🔔 Activar alertas
                     </button>
