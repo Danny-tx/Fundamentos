@@ -3,6 +3,7 @@ import { supabase } from "../lib/supabase"
 import { useParams, useNavigate } from "react-router-dom"
 import useBlockedUsers from "../hooks/useBlockedUsers"
 import useMutedConversations from "../hooks/useMutedConversations"
+import CallModal from "../components/CallModal"
 
 /* ─── Modal de confirmación genérico ─── */
 function ConfirmModal({ title, message, confirmLabel, confirmColor, onConfirm, onCancel, children }) {
@@ -115,6 +116,7 @@ function Chat() {
     const [currentUser, setCurrentUser] = useState(null)
     const [loading, setLoading] = useState(true)
     const [otherUserId, setOtherUserId] = useState(null)
+    const [otherUserAvatar, setOtherUserAvatar] = useState(null)
     const [showMenu, setShowMenu] = useState(false)
 
     // Editar
@@ -144,6 +146,10 @@ function Chat() {
     const [chatNickname, setChatNickname] = useState('')
     const [chatBg, setChatBg] = useState('#0f0f10')
 
+    // Llamadas / Videollamadas
+    const [callState, setCallState] = useState(null)
+    // callState: null | { mode, isIncoming, offer, otherUserName }
+
     const channelRef = useRef(null)
     const messagesEndRef = useRef(null)
     const inputRef = useRef(null)
@@ -170,6 +176,8 @@ function Chat() {
 
     useEffect(() => {
         let channel
+        let profileChannel
+        let callChannel
         const run = async () => {
             const { data: { user } } = await supabase.auth.getUser()
             setCurrentUser(user)
@@ -190,9 +198,43 @@ function Chat() {
 
             channelRef.current = channel
             await supabase.rpc('mark_messages_read', { p_conversation_id: id })
+
+            // ── Escuchar cambios de foto de perfil en tiempo real ──
+            // Usamos el canal de la conversación para re-cargar el avatar del otro usuario
+            profileChannel = supabase
+                .channel(`profiles-${id}`)
+                .on('postgres_changes', {
+                    event: 'UPDATE', schema: 'public', table: 'profiles'
+                }, (payload) => {
+                    if (payload.new?.id && payload.new.id !== user.id) {
+                        // El otro usuario actualizó su perfil
+                        if (payload.new.avatar_url) setOtherUserAvatar(payload.new.avatar_url)
+                    }
+                })
+                .subscribe()
+
+            // ── Escuchar llamadas entrantes ──
+            // Usamos canal por usuario destino (no por conversación) para evitar colisión con CallModal
+            callChannel = supabase
+                .channel(`incoming-call-${user.id}`, { config: { broadcast: { self: false } } })
+                .on('broadcast', { event: 'call_offer' }, ({ payload }) => {
+                    if (payload?.callerName && payload?.sdp && payload?.conversationId === id) {
+                        setCallState({
+                            mode: payload.mode || 'audio',
+                            isIncoming: true,
+                            offer: payload.sdp,
+                            otherUserName: payload.callerName,
+                        })
+                    }
+                })
+                .subscribe()
         }
         run()
-        return () => { if (channel) supabase.removeChannel(channel) }
+        return () => {
+            if (channel) supabase.removeChannel(channel)
+            if (profileChannel) supabase.removeChannel(profileChannel)
+            if (callChannel) supabase.removeChannel(callChannel)
+        }
     }, [id])
 
     const messagesContainerRef = useRef(null)
@@ -244,7 +286,16 @@ function Chat() {
             setConversation(data)
             if (data.type === 'direct' && user) {
                 const { data: otherId } = await supabase.rpc('get_other_participant', { p_conversation_id: id })
-                if (otherId) setOtherUserId(otherId)
+                if (otherId) {
+                    setOtherUserId(otherId)
+                    // Cargar avatar del otro usuario
+                    const { data: profile } = await supabase
+                        .from('profiles')
+                        .select('avatar_url')
+                        .eq('id', otherId)
+                        .single()
+                    if (profile?.avatar_url) setOtherUserAvatar(profile.avatar_url)
+                }
             }
         }
     }
@@ -258,7 +309,7 @@ function Chat() {
                 content: msg.content,
                 displayContent: msg.content?.startsWith('[foto]') ? '📷 Foto' : msg.content,
                 created_at: msg.created_at,
-                sender_id: msg.sender_id, profiles: { username: msg.username },
+                sender_id: msg.sender_id, profiles: { username: msg.username, avatar_url: msg.avatar_url },
                 is_deleted: msg.is_deleted, is_edited: msg.is_edited,
                 edited_at: msg.edited_at, read_count: msg.read_count,
                 pinned_at: msg.pinned_at, image_url: msg.image_url
@@ -394,6 +445,18 @@ function Chat() {
         if (e.key === 'Escape') { setEditingId(null); setEditContent('') }
     }
 
+    /* ── Iniciar llamada saliente ── */
+    const startOutgoingCall = (mode) => {
+        if (blocked || !otherUserId) return
+        setCallState({
+            mode,
+            isIncoming: false,
+            offer: null,
+            otherUserName: displayName,
+            targetUserId: otherUserId,   // necesario para que CallModal sepa a dónde enviar la oferta
+        })
+    }
+
     const handleBlockToggle = async () => {
         if (!otherUserId) return
         isBlocked(otherUserId) ? await unblockUser(otherUserId) : await blockUser(otherUserId)
@@ -488,6 +551,20 @@ function Chat() {
                 />
             )}
 
+            {/* ── Modal de llamada / videollamada ── */}
+            {callState && (
+                <CallModal
+                    conversationId={id}
+                    currentUser={currentUser}
+                    otherUserName={callState.otherUserName}
+                    targetUserId={callState.targetUserId || null}
+                    mode={callState.mode}
+                    isIncoming={callState.isIncoming}
+                    offer={callState.offer}
+                    onClose={() => setCallState(null)}
+                />
+            )}
+
             {/* ── Header ── */}
             <div style={{
                 padding: '14px 18px', borderBottom: '1px solid #1c1c1f',
@@ -506,9 +583,13 @@ function Chat() {
                         width: '36px', height: '36px', borderRadius: '50%',
                         background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '15px', fontWeight: 600, color: 'white', flexShrink: 0
+                        fontSize: '15px', fontWeight: 600, color: 'white', flexShrink: 0,
+                        overflow: 'hidden'
                     }}>
-                        {(displayName || '?')[0].toUpperCase()}
+                        {otherUserAvatar
+                            ? <img src={otherUserAvatar} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={() => setOtherUserAvatar(null)} />
+                            : (displayName || '?')[0].toUpperCase()
+                        }
                     </div>
                     <div>
                         <div style={{ fontSize: '15px', fontWeight: 600, color: '#f4f4f5', lineHeight: 1.2 }}>
@@ -527,6 +608,26 @@ function Chat() {
                         style={{ fontSize: '12px', padding: '6px 10px', background: '#1c1c1f', border: '1px solid #2e2e33', color: '#71717a', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
                         🔔 Activar alertas
                     </button>
+                )}
+
+                {/* Botón llamada de voz */}
+                {conversation?.type === 'direct' && !blocked && (
+                    <button className="icon-btn" onClick={() => startOutgoingCall('audio')} title="Llamada de voz"
+                        style={{
+                            background: 'transparent', border: '1px solid #2e2e33', color: '#a1a1aa',
+                            borderRadius: '10px', width: '36px', height: '36px', cursor: 'pointer',
+                            fontSize: '17px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background .15s'
+                        }}>📞</button>
+                )}
+
+                {/* Botón videollamada */}
+                {conversation?.type === 'direct' && !blocked && (
+                    <button className="icon-btn" onClick={() => startOutgoingCall('video')} title="Videollamada"
+                        style={{
+                            background: 'transparent', border: '1px solid #2e2e33', color: '#a1a1aa',
+                            borderRadius: '10px', width: '36px', height: '36px', cursor: 'pointer',
+                            fontSize: '17px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background .15s'
+                        }}>🎥</button>
                 )}
 
                 {/* Botón personalizar */}
@@ -647,9 +748,17 @@ function Chat() {
                                     style={{ display: 'flex', flexDirection: 'column', alignItems: isOwn ? 'flex-end' : 'flex-start', gap: '2px', marginTop: i > 0 && prevMsg?.sender_id !== msg.sender_id ? '10px' : '2px' }}>
 
                                     {showUsername && (
-                                        <span style={{ fontSize: '11px', color: '#52525b', marginLeft: '12px', fontWeight: 500 }}>
-                                            {msg.profiles?.username}
-                                        </span>
+                                        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginLeft: '12px' }}>
+                                            {msg.profiles?.avatar_url && (
+                                                <img src={msg.profiles.avatar_url} alt=""
+                                                    style={{ width: '16px', height: '16px', borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }}
+                                                    onError={e => e.target.style.display = 'none'}
+                                                />
+                                            )}
+                                            <span style={{ fontSize: '11px', color: '#52525b', fontWeight: 500 }}>
+                                                {msg.profiles?.username}
+                                            </span>
+                                        </div>
                                     )}
 
                                     <div style={{ display: 'flex', alignItems: 'flex-end', gap: '8px', flexDirection: isOwn ? 'row-reverse' : 'row', maxWidth: '72%' }}>

@@ -95,8 +95,11 @@ function Conversations() {
                             >
                                 {/* Avatar */}
                                 <div onClick={() => navigate(`/chat/${item.conversation_id}`)}
-                                    style={{ width: '46px', height: '46px', borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: '18px', flexShrink: 0 }}>
-                                    {(item.name || '?')[0].toUpperCase()}
+                                    style={{ width: '46px', height: '46px', borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: '18px', flexShrink: 0, overflow: 'hidden' }}>
+                                    {item.avatar_url
+                                        ? <img src={item.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.style.display='none' }} />
+                                        : (item.name || '?')[0].toUpperCase()
+                                    }
                                 </div>
 
                                 {/* Info */}
