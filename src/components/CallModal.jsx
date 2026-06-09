@@ -85,7 +85,6 @@ export default function CallModal({
   const [selectedFilter, setSelectedFilter] = useState("none")
   const [segStatus, setSegStatus]         = useState("idle") // idle | loading | ready | failed
 
-  const localVideoRef   = useRef(null)
   const remoteVideoRef  = useRef(null)
   const canvasRef       = useRef(null)
   const overlayRef      = useRef(null)
@@ -99,6 +98,7 @@ export default function CallModal({
   const filterRef       = useRef("none")
   const segRef          = useRef(null)      // instancia SelfieSegmentation
   const rawVidRef       = useRef(null)      // video element crudo para segmentación
+  const rawPreviewRef   = useRef(null)      // video raw para preview local con filtro CSS
 
   const isVideo = mode === "video"
   const fmtTime = s => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`
@@ -204,32 +204,31 @@ export default function CallModal({
     // Canvas para fondo desenfocado
     const blurCv  = document.createElement("canvas"); blurCv.width=W; blurCv.height=H
     const blurCtx = blurCv.getContext("2d")
-    // Canvas para máscara suavizada
-    const maskCv  = document.createElement("canvas"); maskCv.width=W; maskCv.height=H
-    const maskCtx = maskCv.getContext("2d")
-
     // Resultado de segmentación más reciente
     let lastMask = null
+    let segRegistered = false
 
-    // Configurar callback de segmentación
-    if (segRef.current) {
+    const ensureSegCallback = () => {
+      if (segRegistered || !segRef.current) return
       segRef.current.onResults((results) => {
         lastMask = results.segmentationMask
       })
+      segRegistered = true
     }
 
     let frameCount = 0
-    const SEG_EVERY = 2 // segmentar cada N frames para rendimiento
+    const SEG_EVERY = 3
 
     const drawFrame = async () => {
       if (vid.readyState < 2) { animFrameRef.current = requestAnimationFrame(drawFrame); return }
+
+      ensureSegCallback()
 
       const bg   = bgRef.current
       const fid  = filterRef.current
       const fDef = FILTERS.find(f => f.id === fid) || FILTERS[0]
       frameCount++
 
-      // Enviar frame al segmentador cada N frames
       if (segRef.current && bg !== "none" && frameCount % SEG_EVERY === 0) {
         try { await segRef.current.send({ image: vid }) } catch(_) {}
       }
@@ -237,24 +236,14 @@ export default function CallModal({
       ctx.clearRect(0, 0, W, H)
 
       if (bg === "none" || !segRef.current || !lastMask) {
-        // Sin fondo o sin segmentación: dibujar directo
-        ctx.filter = fDef.css !== "none" ? fDef.css : "none"
         ctx.drawImage(vid, 0, 0, W, H)
-        ctx.filter = "none"
-
       } else {
-        // ── SEGMENTACIÓN REAL ──
-        // 1. Preparar máscara suavizada
-        maskCtx.clearRect(0, 0, W, H)
-        maskCtx.drawImage(lastMask, 0, 0, W, H)
-
-        // 2. Dibujar FONDO
+        // ── SEGMENTACIÓN ──
         const bgDef = BACKGROUNDS.find(b => b.id === bg)
         if (bg === "blur") {
-          blurCtx.filter = "blur(20px)"
-          blurCtx.drawImage(vid, -30, -30, W+60, H+60)
-          blurCtx.filter = "none"
-          ctx.drawImage(blurCv, 0, 0)
+          // Blur manual compatible con iOS: pixelar reduciendo resolución
+          blurCtx.drawImage(vid, 0, 0, W/10, H/10)
+          ctx.drawImage(blurCv, 0, 0, W/10, H/10, 0, 0, W, H)
         } else if (bgDef?.type === "color") {
           ctx.fillStyle = bgDef.color
           ctx.fillRect(0, 0, W, H)
@@ -264,19 +253,11 @@ export default function CallModal({
           ctx.fillStyle = "#000"
           ctx.fillRect(0, 0, W, H)
         }
-
-        // 3. Dibujar PERSONA usando máscara como clipping
         personCtx.clearRect(0, 0, W, H)
-        // Dibujar frame original con filtro
-        personCtx.filter = fDef.css !== "none" ? fDef.css : "none"
         personCtx.drawImage(vid, 0, 0, W, H)
-        personCtx.filter = "none"
-        // Aplicar máscara: la máscara de MediaPipe es blanco=persona, negro=fondo
         personCtx.globalCompositeOperation = "destination-in"
         personCtx.drawImage(lastMask, 0, 0, W, H)
         personCtx.globalCompositeOperation = "source-over"
-
-        // 4. Compositar persona sobre fondo
         ctx.drawImage(personCv, 0, 0)
       }
 
@@ -292,10 +273,11 @@ export default function CallModal({
 
     drawFrame()
 
-    // Stream procesado desde canvas + audio original
+    // Stream procesado desde canvas + audio original (se envía al peer)
     const processed = canvas.captureStream(30)
     rawStream.getAudioTracks().forEach(t => processed.addTrack(t))
-    if (localVideoRef.current) localVideoRef.current.srcObject = processed
+    // Preview local: mostrar video RAW (con filtro CSS), no el canvas
+    if (rawPreviewRef.current) rawPreviewRef.current.srcObject = rawStream
     return processed
   }, [])
 
@@ -340,7 +322,7 @@ export default function CallModal({
       await new Promise(res => notifCh.subscribe(s => { if(s==="SUBSCRIBED") res() }))
       await notifCh.send({ type:"broadcast", event:"call_offer", payload:{
         sdp: pc.localDescription, mode, conversationId,
-        callerName: currentUser?.user_metadata?.username || "Alguien",
+        callerName: currentUser?.user_metadata?.username || currentUser?.user_metadata?.full_name || currentUser?.email?.split("@")[0] || "Usuario",
       }})
       supabase.removeChannel(notifCh)
     } catch(err) { console.error("Error iniciando:", err); setStatus("error") }
@@ -378,6 +360,7 @@ export default function CallModal({
     if (pcRef.current) { pcRef.current.close(); pcRef.current=null }
     if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t=>t.stop())
     if (rawVidRef.current) { rawVidRef.current.srcObject=null }
+    if (rawPreviewRef.current) { rawPreviewRef.current.srcObject=null }
     if (signalChannelRef.current) {
       signalChannelRef.current.send({ type:"broadcast", event:"call_end", payload:{} })
       supabase.removeChannel(signalChannelRef.current); signalChannelRef.current=null
@@ -462,7 +445,7 @@ export default function CallModal({
             <video ref={remoteVideoRef} autoPlay playsInline style={{ width:"100%",height:"100%",objectFit:"cover",display:"block" }} />
             <canvas ref={canvasRef} style={{ display:"none" }} />
             <canvas ref={overlayRef} style={{ display:"none" }} />
-            <video ref={localVideoRef} autoPlay playsInline muted style={{ position:"absolute",bottom:"12px",right:"12px",width:"120px",height:"90px",objectFit:"cover",borderRadius:"12px",border:"2px solid #27272a",background:"#111" }} />
+            <video ref={rawPreviewRef} autoPlay playsInline muted style={{ position:"absolute",bottom:"12px",right:"12px",width:"120px",height:"90px",objectFit:"cover",borderRadius:"12px",border:"2px solid #27272a",background:"#111",filter:selectedFilter!=="none"?(FILTERS.find(f=>f.id===selectedFilter)?.css||"none"):"none" }} />
             {status!=="connected" && (
               <div style={{ position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",color:"#52525b",fontSize:"14px",background:"rgba(0,0,0,0.5)" }}>
                 {status==="incoming"?"Acepta para ver el video":"Esperando conexión…"}
