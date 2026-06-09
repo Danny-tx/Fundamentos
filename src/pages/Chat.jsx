@@ -16,7 +16,7 @@ function ConfirmModal({ title, message, confirmLabel, confirmColor, onConfirm, o
         }}>
             <div style={{
                 background: '#18181b', border: '1px solid #2e2e33',
-                borderRadius: '16px', padding: '28px 24px', width: '340px',
+                borderRadius: '16px', padding: '28px 24px', width: 'min(340px, 92vw)',
                 boxShadow: '0 24px 60px rgba(0,0,0,0.6)',
                 animation: 'slideUp .18s ease', fontFamily: "'DM Sans', sans-serif"
             }}>
@@ -79,7 +79,7 @@ function CustomizeModal({ nickname, bg, onSave, onClose }) {
     const [bgVal, setBgVal] = useState(bg || '#0f0f10')
     return (
         <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <div style={{ background: '#18181b', border: '1px solid #2e2e33', borderRadius: '16px', padding: '28px 24px', width: '360px', boxShadow: '0 24px 60px rgba(0,0,0,0.6)', fontFamily: "'DM Sans', sans-serif" }}>
+            <div style={{ background: '#18181b', border: '1px solid #2e2e33', borderRadius: '16px', padding: '28px 24px', width: 'min(360px, 92vw)', boxShadow: '0 24px 60px rgba(0,0,0,0.6)', fontFamily: "'DM Sans', sans-serif" }}>
                 <h3 style={{ margin: '0 0 20px', fontSize: '17px', fontWeight: 600, color: '#f4f4f5' }}>✏️ Personalizar chat</h3>
 
                 <label style={{ display: 'block', marginBottom: '6px', fontSize: '13px', color: '#a1a1aa' }}>Apodo del contacto</label>
@@ -478,7 +478,7 @@ function Chat() {
                 <img src={url} alt="📷 Foto"
                     style={{ maxWidth: '220px', maxHeight: '260px', borderRadius: '10px', display: 'block', cursor: 'pointer' }}
                     onClick={() => window.open(url, '_blank')}
-                    onError={e => { e.target.style.display='none'; const f = e.target.parentElement?.querySelector('.foto-fallback'); if(f) f.style.display='block' }}
+                    onError={e => { e.target.style.display='none'; const f=e.target.parentElement?.querySelector('.foto-fallback'); if(f) f.style.display='block' }}
                 />
             )
         }
@@ -486,6 +486,15 @@ function Chat() {
     }
 
     const css = `
+        @supports (padding-bottom: env(safe-area-inset-bottom)) {
+            .chat-input-bar { padding-bottom: calc(8px + env(safe-area-inset-bottom)) !important; }
+        }
+        @media (max-width: 480px) {
+            .msg-actions { opacity: 1 !important; }
+            .msg-bubble { font-size: 15px !important; }
+        }
+    `
+    const cssExtra = `
         @import url('https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,400;0,500;0,600;1,400&display=swap');
         * { box-sizing: border-box; }
         ::-webkit-scrollbar { width: 4px; }
@@ -522,7 +531,7 @@ function Chat() {
 
     return (
         <div style={{ display: "flex", flexDirection: "column", height: "100vh", width: "100%", background: chatBg, fontFamily: "'DM Sans', sans-serif", color: '#f4f4f5' }}>
-            <style>{css}</style>
+            <style>{css}{cssExtra}</style>
 
             {deleteConfirm && (
                 <ConfirmModal
@@ -567,16 +576,16 @@ function Chat() {
 
             {/* ── Header ── */}
             <div style={{
-                padding: '14px 18px', borderBottom: '1px solid #1c1c1f',
+                padding: '10px 12px', borderBottom: '1px solid #1c1c1f',
                 display: 'flex', alignItems: 'center', gap: '12px',
                 background: '#111113', backdropFilter: 'blur(12px)'
             }}>
                 <button onClick={() => navigate('/conversations')} style={{
                     background: '#1c1c1f', border: '1px solid #2e2e33', color: '#a1a1aa',
-                    borderRadius: '10px', padding: '7px 12px', cursor: 'pointer',
-                    fontSize: '14px', fontFamily: 'inherit', fontWeight: 500,
+                    borderRadius: '10px', padding: '6px 10px', cursor: 'pointer',
+                    fontSize: '13px', fontFamily: 'inherit', fontWeight: 500,
                     display: 'flex', alignItems: 'center', gap: '4px'
-                }}>← Volver</button>
+                }}>←</button>
 
                 <div style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '10px' }}>
                     <div style={{
@@ -603,10 +612,10 @@ function Chat() {
                     </div>
                 </div>
 
-                {notifPermission !== 'granted' && (
-                    <button onClick={() => typeof Notification !== 'undefined' && Notification.requestPermission().then(p => setNotifPermission(p))}
-                        style={{ fontSize: '12px', padding: '6px 10px', background: '#1c1c1f', border: '1px solid #2e2e33', color: '#71717a', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap' }}>
-                        🔔 Activar alertas
+                {notifPermission !== 'granted' && typeof Notification !== 'undefined' && (
+                    <button onClick={() => Notification.requestPermission().then(p => setNotifPermission(p))}
+                        style={{ fontSize: '12px', padding: '6px 10px', background: '#1c1c1f', border: '1px solid #2e2e33', color: '#71717a', borderRadius: '8px', cursor: 'pointer', fontFamily: 'inherit', whiteSpace: 'nowrap', display: 'none' }}>
+                        🔔
                     </button>
                 )}
 
@@ -726,7 +735,7 @@ function Chat() {
             )}
 
             {/* ── Lista de mensajes ── */}
-            <div ref={messagesContainerRef} style={{ flex: 1, overflowY: 'auto', padding: '20px 18px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            <div ref={messagesContainerRef} style={{ flex: 1, overflowY: 'auto', padding: '12px 10px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
                 {messages.length === 0 ? (
                     <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: '#3f3f46', gap: '8px' }}>
                         <span style={{ fontSize: '36px' }}>💬</span>
@@ -822,7 +831,7 @@ function Chat() {
             </div>
 
             {/* ── Input de mensaje ── */}
-            <div style={{ padding: '12px 18px', borderTop: '1px solid #1c1c1f', background: '#111113' }}>
+            <div className="chat-input-bar" style={{ padding: '8px 10px', borderTop: '1px solid #1c1c1f', background: '#111113' }}>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', position: 'relative' }}>
                     {/* Input oculto para fotos */}
                     <input type="file" accept="image/*" ref={fileInputRef} onChange={handlePhotoSend} style={{ display: 'none' }} />
@@ -867,7 +876,7 @@ function Chat() {
                         placeholder={blocked ? 'No puedes enviar mensajes a este usuario' : 'Escribe un mensaje…'}
                         disabled={blocked}
                         style={{
-                            flex: 1, padding: '11px 16px', borderRadius: '14px',
+                            flex: 1, padding: '11px 12px', borderRadius: '14px',
                             border: '1px solid #2e2e33', background: '#18181b',
                             color: blocked ? '#52525b' : '#f4f4f5', fontSize: '14px',
                             fontFamily: 'inherit', outline: 'none', transition: 'border-color .15s'
@@ -878,7 +887,7 @@ function Chat() {
 
                     {/* Botón enviar */}
                     <button className="send-btn" onClick={sendMessage} disabled={blocked || !newMessage.trim()} style={{
-                        padding: '11px 20px', borderRadius: '14px', border: 'none',
+                        padding: '11px 14px', borderRadius: '14px', border: 'none',
                         background: blocked || !newMessage.trim() ? '#1c1c1f' : '#3b82f6',
                         color: blocked || !newMessage.trim() ? '#52525b' : 'white',
                         cursor: blocked || !newMessage.trim() ? 'not-allowed' : 'pointer',
