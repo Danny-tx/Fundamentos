@@ -24,7 +24,21 @@ function Conversations() {
             channelRef.current = channel
         }
         run()
-        return () => { if (channel) supabase.removeChannel(channel) }
+
+        // Recargar al volver desde otra página (ej: desde Chat)
+        const handleVisibility = () => {
+            if (document.visibilityState === 'visible') getConversations()
+        }
+        const handleFocus = () => getConversations()
+
+        document.addEventListener('visibilitychange', handleVisibility)
+        window.addEventListener('focus', handleFocus)
+
+        return () => {
+            if (channel) supabase.removeChannel(channel)
+            document.removeEventListener('visibilitychange', handleVisibility)
+            window.removeEventListener('focus', handleFocus)
+        }
     }, [])
 
     // Cerrar menú al click fuera
