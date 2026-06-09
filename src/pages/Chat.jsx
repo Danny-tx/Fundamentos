@@ -72,6 +72,10 @@ function Chat() {
     const [deleteConfirm, setDeleteConfirm] = useState(null)   // messageId a eliminar
     const [editConfirm, setEditConfirm] = useState(null)        // { id, newContent }
 
+    // Fijar mensajes
+    const [pinnedMessages, setPinnedMessages] = useState([])
+    const [showPinned, setShowPinned] = useState(false)
+
     // Notificaciones
     const [notifPermission, setNotifPermission] = useState(Notification.permission)
 
@@ -88,6 +92,7 @@ function Chat() {
             setCurrentUser(user)
             await getConversation(user)
             await getMessages()
+            await getPinnedMessages()
             setLoading(false)
 
             channel = supabase
@@ -153,10 +158,28 @@ function Chat() {
                 id: msg.id, content: msg.content, created_at: msg.created_at,
                 sender_id: msg.sender_id, profiles: { username: msg.username },
                 is_deleted: msg.is_deleted, is_edited: msg.is_edited,
-                edited_at: msg.edited_at, read_count: msg.read_count
+                edited_at: msg.edited_at, read_count: msg.read_count,
+                pinned_at: msg.pinned_at
             })))
             await supabase.rpc('mark_messages_read', { p_conversation_id: id })
         }
+    }
+
+    const getPinnedMessages = async () => {
+        const { data } = await supabase.rpc('get_pinned_messages', { p_conversation_id: id })
+        if (data) setPinnedMessages(data)
+    }
+
+    const pinMessage = async (messageId) => {
+        await supabase.rpc('pin_message', { p_message_id: messageId })
+        await getPinnedMessages()
+        await getMessages()
+    }
+
+    const unpinMessage = async (messageId) => {
+        await supabase.rpc('unpin_message', { p_message_id: messageId })
+        await getPinnedMessages()
+        await getMessages()
     }
 
     const sendMessage = async () => {
@@ -329,6 +352,18 @@ function Chat() {
                             border: '1px solid #2e2e33', borderRadius: '12px', padding: '6px',
                             zIndex: 100, minWidth: '200px', boxShadow: '0 12px 32px rgba(0,0,0,0.5)'
                         }}>
+                            {/* Ver mensajes fijados */}
+                            {pinnedMessages.length > 0 && (
+                                <button className="menu-item" onClick={() => { setShowPinned(true); setShowMenu(false) }} style={{
+                                    display: 'flex', alignItems: 'center', gap: '10px',
+                                    width: '100%', padding: '10px 12px', background: 'none',
+                                    border: 'none', color: '#e4e4e7', cursor: 'pointer',
+                                    textAlign: 'left', borderRadius: '8px', fontSize: '14px', fontFamily: 'inherit'
+                                }}>
+                                    <span>📌</span>
+                                    Ver fijados ({pinnedMessages.length})
+                                </button>
+                            )}
                             <button className="menu-item" onClick={handleMuteToggle} style={{
                                 display: 'flex', alignItems: 'center', gap: '10px',
                                 width: '100%', padding: '10px 12px', background: 'none',
@@ -359,6 +394,43 @@ function Chat() {
             {blocked && (
                 <div style={{ padding: '10px 18px', background: '#1c0a0a', borderBottom: '1px solid #2d1010', color: '#f87171', textAlign: 'center', fontSize: '13px', fontWeight: 500 }}>
                     🚫 Has bloqueado a este usuario. No puedes enviar ni recibir sus mensajes.
+                </div>
+            )}
+
+            {/* ── Banner mensajes fijados ── */}
+            {pinnedMessages.length > 0 && (
+                <div
+                    onClick={() => setShowPinned(true)}
+                    style={{ padding: '9px 18px', background: '#1a1a0f', borderBottom: '1px solid #3b3200', color: '#f59e0b', fontSize: '13px', fontWeight: 500, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px' }}
+                >
+                    <span>📌</span>
+                    <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {pinnedMessages.length} mensaje{pinnedMessages.length > 1 ? 's' : ''} fijado{pinnedMessages.length > 1 ? 's' : ''} · "{pinnedMessages[0]?.content?.slice(0, 50)}{pinnedMessages[0]?.content?.length > 50 ? '…' : ''}"
+                    </span>
+                    <span style={{ fontSize: '11px', color: '#a16207' }}>Ver todos →</span>
+                </div>
+            )}
+
+            {/* ── Modal mensajes fijados ── */}
+            {showPinned && (
+                <div style={{ position: 'fixed', inset: 0, zIndex: 1000, background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(6px)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                    <div style={{ background: '#18181b', border: '1px solid #2e2e33', borderRadius: '16px', padding: '24px', width: '420px', maxWidth: '92vw', maxHeight: '80vh', display: 'flex', flexDirection: 'column', boxShadow: '0 24px 60px rgba(0,0,0,0.6)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                            <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 600, color: '#f4f4f5' }}>📌 Mensajes fijados</h3>
+                            <button onClick={() => setShowPinned(false)} style={{ background: 'none', border: 'none', color: '#71717a', cursor: 'pointer', fontSize: '20px', lineHeight: 1 }}>×</button>
+                        </div>
+                        <div style={{ overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                            {pinnedMessages.map(pm => (
+                                <div key={pm.id} style={{ background: '#111113', border: '1px solid #2e2e33', borderRadius: '12px', padding: '12px 14px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                                    <div style={{ flex: 1 }}>
+                                        <div style={{ fontSize: '12px', color: '#52525b', marginBottom: '4px', fontWeight: 500 }}>@{pm.username} · fijado por @{pm.pinner_name}</div>
+                                        <p style={{ margin: 0, fontSize: '14px', color: '#e4e4e7', lineHeight: 1.5, wordBreak: 'break-word' }}>{pm.content}</p>
+                                    </div>
+                                    <button onClick={() => { unpinMessage(pm.id); if (pinnedMessages.length <= 1) setShowPinned(false) }} title="Desfijar" style={{ background: '#2e2e33', border: 'none', borderRadius: '7px', color: '#f59e0b', cursor: 'pointer', padding: '5px 8px', fontSize: '13px', flexShrink: 0, fontFamily: 'inherit' }}>Desfijar</button>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
                 </div>
             )}
 
@@ -426,6 +498,11 @@ function Chat() {
                                         {/* Botones de acción flotantes */}
                                         {isOwn && !isDeleted && !isEditing && (
                                             <div className="msg-actions" style={{ display: 'flex', gap: '4px', alignItems: 'center', paddingBottom: '4px' }}>
+                                                <button className="action-btn" onClick={() => msg.pinned_at ? unpinMessage(msg.id) : pinMessage(msg.id)} title={msg.pinned_at ? 'Desfijar' : 'Fijar'} style={{
+                                                    width: '26px', height: '26px', border: `1px solid ${msg.pinned_at ? '#3b3200' : '#2e2e33'}`,
+                                                    background: '#18181b', borderRadius: '7px', cursor: 'pointer',
+                                                    fontSize: '12px', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                                }}>{msg.pinned_at ? '📍' : '📌'}</button>
                                                 <button className="action-btn" onClick={() => startEdit(msg)} title="Editar" style={{
                                                     width: '26px', height: '26px', border: '1px solid #2e2e33',
                                                     background: '#18181b', borderRadius: '7px', cursor: 'pointer',

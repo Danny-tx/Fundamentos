@@ -12,6 +12,7 @@ import NewConversation from './pages/NewConversations'
 import Chat from './pages/Chat'
 import ChangePassword from './pages/ChangePassword'
 import OfflineIndicator from './components/OfflineIndicator'
+import AdminDashboard from './pages/AdminDashboard'
 
 function App() {
   return (
@@ -51,6 +52,11 @@ function App() {
       <Route path="/change-password" element={
         <ProtectedRoute>
           <ChangePassword />
+        </ProtectedRoute>
+      } />
+      <Route path="/admin" element={
+        <ProtectedRoute>
+          <AdminDashboard />
         </ProtectedRoute>
       } />
       </Routes>
