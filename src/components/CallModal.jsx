@@ -162,6 +162,7 @@ export default function CallModal({
   const segRef          = useRef(null)      // instancia SelfieSegmentation
   const rawVidRef       = useRef(null)      // video element crudo para segmentación
   const rawPreviewRef   = useRef(null)      // video raw para preview local con filtro CSS
+  const previewCanvasRef = useRef(null)     // canvas pequeño que muestra el video procesado en esquina
 
   const isVideo = mode === "video"
   const fmtTime = s => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`
@@ -173,23 +174,30 @@ export default function CallModal({
     const load = async () => {
       setSegStatus("loading")
       try {
-        // Cargar script si no está ya en el DOM
+        // Cargar script solo si no está ya listo
         await new Promise((resolve, reject) => {
           if (window.SelfieSegmentation) { resolve(); return }
+          if (window._mpLoading) {
+            const wait = () => window.SelfieSegmentation ? resolve() : setTimeout(wait, 100)
+            wait(); return
+          }
+          window._mpLoading = true
           const existing = document.getElementById("mediapipe-script")
           if (existing) { existing.addEventListener("load", resolve); existing.addEventListener("error", reject); return }
           const script = document.createElement("script")
           script.id = "mediapipe-script"
-          script.src = "https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js"
+          script.src = "https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js"
           script.crossOrigin = "anonymous"
-          script.onload = resolve
-          script.onerror = reject
+          script.onload = () => { window._mpLoading = false; resolve() }
+          script.onerror = () => { window._mpLoading = false; reject() }
           document.head.appendChild(script)
         })
         if (cancelled) return
         if (!window.SelfieSegmentation) throw new Error("SelfieSegmentation no disponible")
+        // Reutilizar instancia si ya existe (React StrictMode doble-invoke en dev)
+        if (segRef.current) { setSegStatus("ready"); return }
         const seg = new window.SelfieSegmentation({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${file}`
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
         })
         seg.setOptions({ modelSelection: 1, selfieMode: false })
         await seg.initialize()
@@ -357,6 +365,14 @@ export default function CallModal({
         octx.clearRect(0, 0, W, H)
         OVERLAYS[fDef.overlay](octx, W, H)
         ctx.drawImage(overlay, 0, 0)
+      }
+
+      // Copiar resultado al canvas de preview pequeño
+      if (previewCanvasRef.current) {
+        const pc = previewCanvasRef.current
+        if (pc.width !== W) pc.width = W
+        if (pc.height !== H) pc.height = H
+        pc.getContext("2d").drawImage(canvas, 0, 0)
       }
 
       animFrameRef.current = requestAnimationFrame(drawFrame)
@@ -533,10 +549,16 @@ export default function CallModal({
         {/* Videos */}
         {isVideo && (
           <div style={{ position:"relative",width:"100%",borderRadius:"16px",overflow:"hidden",background:"#000",aspectRatio:"16/9" }}>
+            {/* Video remoto — siempre ocupa el área principal */}
             <video ref={remoteVideoRef} autoPlay playsInline style={{ width:"100%",height:"100%",objectFit:"cover",display:"block" }} />
-            <canvas ref={canvasRef} style={{ position:"absolute",inset:0,width:"100%",height:"100%",display:selectedBg!=="none"?"block":"none",pointerEvents:"none" }} />
+            {/* Canvas oculto — solo para procesar y enviar al peer */}
+            <canvas ref={canvasRef} style={{ display:"none" }} />
             <canvas ref={overlayRef} style={{ display:"none" }} />
-            <video ref={rawPreviewRef} autoPlay playsInline muted style={{ position:"absolute",bottom:"12px",right:"12px",width:"120px",height:"90px",objectFit:"cover",borderRadius:"12px",border:"2px solid #27272a",background:"#111",filter:selectedFilter!=="none"?(FILTERS.find(f=>f.id===selectedFilter)?.css||"none"):"none" }} />
+            {/* Preview local en esquina — canvas procesado si hay fondo/filtro, video raw si no */}
+            <div style={{ position:"absolute",bottom:"12px",right:"12px",width:"120px",height:"90px",borderRadius:"12px",overflow:"hidden",border:"2px solid #27272a",background:"#111" }}>
+              <video ref={rawPreviewRef} autoPlay playsInline muted style={{ position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",display:selectedBg!=="none"?"none":"block",filter:selectedFilter!=="none"?(FILTERS.find(f=>f.id===selectedFilter)?.css||"none"):"none" }} />
+              <canvas ref={previewCanvasRef} style={{ position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",display:selectedBg!=="none"?"block":"none" }} />
+            </div>
             {status!=="connected" && (
               <div style={{ position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",color:"#52525b",fontSize:"14px",background:"rgba(0,0,0,0.5)" }}>
                 {status==="incoming"?"Acepta para ver el video":"Esperando conexión…"}
