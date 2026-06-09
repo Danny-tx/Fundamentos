@@ -552,12 +552,14 @@ export default function CallModal({
             {/* Video remoto — siempre ocupa el área principal */}
             <video ref={remoteVideoRef} autoPlay playsInline style={{ width:"100%",height:"100%",objectFit:"cover",display:"block" }} />
             {/* Canvas oculto — solo para procesar y enviar al peer */}
-            <canvas ref={canvasRef} style={{ display:"none" }} />
-            <canvas ref={overlayRef} style={{ display:"none" }} />
+            <canvas ref={canvasRef} style={{ position:"absolute", left:"-9999px", top:0, pointerEvents:"none", width:"1px", height:"1px" }} />
+            <canvas ref={overlayRef} style={{ position:"absolute", left:"-9999px", top:0, pointerEvents:"none", width:"1px", height:"1px" }} />
             {/* Preview local en esquina — canvas procesado si hay fondo/filtro, video raw si no */}
             <div style={{ position:"absolute",bottom:"12px",right:"12px",width:"120px",height:"90px",borderRadius:"12px",overflow:"hidden",border:"2px solid #27272a",background:"#111" }}>
-              <video ref={rawPreviewRef} autoPlay playsInline muted style={{ position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",display:selectedBg!=="none"?"none":"block",filter:selectedFilter!=="none"?(FILTERS.find(f=>f.id===selectedFilter)?.css||"none"):"none" }} />
-              <canvas ref={previewCanvasRef} style={{ position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",display:selectedBg!=="none"?"block":"none" }} />
+              {/* rawPreviewRef: solo visible cuando NO hay fondo NI filtro (video crudo sin procesar) */}
+              <video ref={rawPreviewRef} autoPlay playsInline muted style={{ position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",display:(selectedBg==="none"&&selectedFilter==="none")?"block":"none" }} />
+              {/* previewCanvasRef: muestra el canvas procesado cuando hay fondo O filtro */}
+              <canvas ref={previewCanvasRef} style={{ position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",display:(selectedBg!=="none"||selectedFilter!=="none")?"block":"none" }} />
             </div>
             {status!=="connected" && (
               <div style={{ position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",color:"#52525b",fontSize:"14px",background:"rgba(0,0,0,0.5)" }}>
