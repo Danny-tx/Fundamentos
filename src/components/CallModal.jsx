@@ -32,6 +32,69 @@ const FILTERS = [
   { id: "fire",    label: "🔥 Fuego",   css: "saturate(1.5) hue-rotate(-20deg) brightness(1.1)", overlay: "fire" },
 ]
 
+// Detectar soporte de ctx.filter una sola vez
+const CTX_FILTER_SUPPORTED = (() => {
+  try {
+    const c = document.createElement("canvas")
+    const ctx = c.getContext("2d")
+    ctx.filter = "grayscale(1)"
+    return ctx.filter === "grayscale(1)"
+  } catch(_) { return false }
+})()
+
+// Aplicar filtro en canvas de forma compatible con iOS Safari
+// Para iOS usamos pixel manipulation para B&N y sepia, ctx.filter para el resto en desktop
+const applyCanvasFilter = (ctx, vid, W, H, filterId) => {
+  if (filterId === "none") {
+    ctx.drawImage(vid, 0, 0, W, H)
+    return
+  }
+  const fDef = FILTERS.find(f => f.id === filterId)
+  if (!fDef) { ctx.drawImage(vid, 0, 0, W, H); return }
+
+  if (CTX_FILTER_SUPPORTED) {
+    ctx.filter = fDef.css
+    ctx.drawImage(vid, 0, 0, W, H)
+    ctx.filter = "none"
+    return
+  }
+
+  // Fallback iOS: pixel manipulation para efectos básicos
+  ctx.drawImage(vid, 0, 0, W, H)
+  if (filterId === "bw" || filterId === "sepia" || filterId === "warm" || filterId === "cool") {
+    const imageData = ctx.getImageData(0, 0, W, H)
+    const data = imageData.data
+    for (let i = 0; i < data.length; i += 4) {
+      const r = data[i], g = data[i+1], b = data[i+2]
+      if (filterId === "bw") {
+        const gray = 0.299*r + 0.587*g + 0.114*b
+        data[i] = data[i+1] = data[i+2] = gray
+      } else if (filterId === "sepia") {
+        data[i]   = Math.min(255, r*0.393 + g*0.769 + b*0.189)
+        data[i+1] = Math.min(255, r*0.349 + g*0.686 + b*0.168)
+        data[i+2] = Math.min(255, r*0.272 + g*0.534 + b*0.131)
+      } else if (filterId === "warm") {
+        data[i]   = Math.min(255, r * 1.1)
+        data[i+2] = Math.max(0,   b * 0.9)
+      } else if (filterId === "cool") {
+        data[i]   = Math.max(0,   r * 0.9)
+        data[i+2] = Math.min(255, b * 1.1)
+      }
+    }
+    ctx.putImageData(imageData, 0, 0)
+  } else if (filterId === "bright") {
+    const imageData = ctx.getImageData(0, 0, W, H)
+    const data = imageData.data
+    for (let i = 0; i < data.length; i += 4) {
+      data[i]   = Math.min(255, data[i]   * 1.3)
+      data[i+1] = Math.min(255, data[i+1] * 1.3)
+      data[i+2] = Math.min(255, data[i+2] * 1.3)
+    }
+    ctx.putImageData(imageData, 0, 0)
+  }
+  // frog/dog/rainbow/fire: sin filtro de color en iOS, solo overlay
+}
+
 const OVERLAYS = {
   frog: (ctx, w, h) => {
     ctx.save(); ctx.globalAlpha = 0.85
@@ -103,20 +166,32 @@ export default function CallModal({
   const isVideo = mode === "video"
   const fmtTime = s => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`
 
-  /* ── Cargar MediaPipe SelfieSegmentation desde npm ── */
+  /* ── Cargar MediaPipe via script tag (evita problemas de CJS/ESM con Vite) ── */
   useEffect(() => {
     if (!isVideo) return
     let cancelled = false
     const load = async () => {
       setSegStatus("loading")
       try {
-        const { SelfieSegmentation } = await import("@mediapipe/selfie_segmentation")
-        const seg = new SelfieSegmentation({
-          locateFile: (file) => {
-            return `/${file}`
-          }
+        // Cargar script si no está ya en el DOM
+        await new Promise((resolve, reject) => {
+          if (window.SelfieSegmentation) { resolve(); return }
+          const existing = document.getElementById("mediapipe-script")
+          if (existing) { existing.addEventListener("load", resolve); existing.addEventListener("error", reject); return }
+          const script = document.createElement("script")
+          script.id = "mediapipe-script"
+          script.src = "https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/selfie_segmentation.js"
+          script.crossOrigin = "anonymous"
+          script.onload = resolve
+          script.onerror = reject
+          document.head.appendChild(script)
         })
-        seg.setOptions({ modelSelection: 1, selfieMode: true })
+        if (cancelled) return
+        if (!window.SelfieSegmentation) throw new Error("SelfieSegmentation no disponible")
+        const seg = new window.SelfieSegmentation({
+          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${file}`
+        })
+        seg.setOptions({ modelSelection: 1, selfieMode: false })
         await seg.initialize()
         if (cancelled) { seg.close(); return }
         segRef.current = seg
@@ -236,13 +311,21 @@ export default function CallModal({
       ctx.clearRect(0, 0, W, H)
 
       if (bg === "none" || !segRef.current || !lastMask) {
-        ctx.drawImage(vid, 0, 0, W, H)
+        // Sin fondo: espejear todo el frame
+        ctx.save()
+        ctx.translate(W, 0); ctx.scale(-1, 1)
+        applyCanvasFilter(ctx, vid, W, H, fid)
+        ctx.restore()
       } else {
         // ── SEGMENTACIÓN ──
+        // 1. Dibujar fondo SIN espejear
         const bgDef = BACKGROUNDS.find(b => b.id === bg)
         if (bg === "blur") {
-          // Blur manual compatible con iOS: pixelar reduciendo resolución
+          // Para blur: dibujar el video espejado a baja res como fondo
+          blurCtx.save()
+          blurCtx.translate(W/10, 0); blurCtx.scale(-1, 1)
           blurCtx.drawImage(vid, 0, 0, W/10, H/10)
+          blurCtx.restore()
           ctx.drawImage(blurCv, 0, 0, W/10, H/10, 0, 0, W, H)
         } else if (bgDef?.type === "color") {
           ctx.fillStyle = bgDef.color
@@ -253,11 +336,19 @@ export default function CallModal({
           ctx.fillStyle = "#000"
           ctx.fillRect(0, 0, W, H)
         }
+        // 2. Dibujar persona espejada en personCv
         personCtx.clearRect(0, 0, W, H)
-        personCtx.drawImage(vid, 0, 0, W, H)
+        personCtx.save()
+        personCtx.translate(W, 0); personCtx.scale(-1, 1)
+        applyCanvasFilter(personCtx, vid, W, H, fid)
+        personCtx.restore()
+        // 3. Aplicar máscara (también espejada)
+        personCtx.save()
         personCtx.globalCompositeOperation = "destination-in"
+        personCtx.translate(W, 0); personCtx.scale(-1, 1)
         personCtx.drawImage(lastMask, 0, 0, W, H)
-        personCtx.globalCompositeOperation = "source-over"
+        personCtx.restore()
+        // 4. Compositar persona sobre fondo
         ctx.drawImage(personCv, 0, 0)
       }
 
@@ -443,7 +534,7 @@ export default function CallModal({
         {isVideo && (
           <div style={{ position:"relative",width:"100%",borderRadius:"16px",overflow:"hidden",background:"#000",aspectRatio:"16/9" }}>
             <video ref={remoteVideoRef} autoPlay playsInline style={{ width:"100%",height:"100%",objectFit:"cover",display:"block" }} />
-            <canvas ref={canvasRef} style={{ display:"none" }} />
+            <canvas ref={canvasRef} style={{ position:"absolute",inset:0,width:"100%",height:"100%",display:selectedBg!=="none"?"block":"none",pointerEvents:"none" }} />
             <canvas ref={overlayRef} style={{ display:"none" }} />
             <video ref={rawPreviewRef} autoPlay playsInline muted style={{ position:"absolute",bottom:"12px",right:"12px",width:"120px",height:"90px",objectFit:"cover",borderRadius:"12px",border:"2px solid #27272a",background:"#111",filter:selectedFilter!=="none"?(FILTERS.find(f=>f.id===selectedFilter)?.css||"none"):"none" }} />
             {status!=="connected" && (
