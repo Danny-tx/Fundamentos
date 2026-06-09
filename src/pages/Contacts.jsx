@@ -22,7 +22,7 @@ function Contacts() {
         if (data) {
             const withProfiles = await Promise.all(data.map(async item => {
                 const { data: profile } = await supabase.from('profiles')
-                    .select('username, full_name').eq('id', item.addressee_id).single()
+                    .select('username, full_name, avatar_url').eq('id', item.addressee_id).single()
                 return { ...item, profile }
             }))
             setContacts(withProfiles)
@@ -38,7 +38,7 @@ function Contacts() {
         if (data) {
             const withProfiles = await Promise.all(data.map(async item => {
                 const { data: profile } = await supabase.from('profiles')
-                    .select('username, full_name').eq('id', item.requester_id).single()
+                    .select('username, full_name, avatar_url').eq('id', item.requester_id).single()
                 return { ...item, profile }
             }))
             setRequests(withProfiles)
@@ -47,7 +47,7 @@ function Contacts() {
 
     const searchUser = async () => {
         const { data: { user } } = await supabase.auth.getUser()
-        const { data } = await supabase.from('profiles').select('id, username, full_name')
+        const { data } = await supabase.from('profiles').select('id, username, full_name, avatar_url')
             .eq('username', searchUsername).neq('id', user.id).single()
         if (data) { setSearchResult(data); setMessage({ text: '', type: '' }) }
         else { setSearchResult(null); setMessage({ text: 'Usuario no encontrado', type: 'error' }) }
@@ -146,8 +146,11 @@ function Contacts() {
                     {searchResult && (
                         <div style={{ marginTop: '14px', padding: '14px', background: t.surface, borderRadius: '12px', border: `1px solid ${t.border}`, display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: '16px' }}>
-                                    {searchResult.username[0].toUpperCase()}
+                                <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: '16px', overflow: 'hidden' }}>
+                                    {searchResult.avatar_url
+                                        ? <img src={searchResult.avatar_url} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} onError={e => { e.target.style.display='none' }} />
+                                        : searchResult.username[0].toUpperCase()
+                                    }
                                 </div>
                                 <div>
                                     <p style={{ margin: 0, fontWeight: 600, fontSize: '14px', color: t.text }}>{searchResult.username}</p>
@@ -170,8 +173,11 @@ function Contacts() {
                             {requests.map(item => (
                                 <div key={item.requester_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', background: t.surface, borderRadius: '12px', border: `1px solid ${t.border}` }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                        <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'linear-gradient(135deg, #f59e0b, #ef4444)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: '15px' }}>
-                                            {item.profile?.username?.[0]?.toUpperCase() || '?'}
+                                        <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'linear-gradient(135deg, #f59e0b, #ef4444)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: '15px', overflow: 'hidden' }}>
+                                            {item.profile?.avatar_url
+                                                ? <img src={item.profile.avatar_url} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} onError={e => { e.target.style.display='none' }} />
+                                                : item.profile?.username?.[0]?.toUpperCase() || '?'
+                                            }
                                         </div>
                                         <div>
                                             <p style={{ margin: 0, fontWeight: 600, fontSize: '14px', color: t.text }}>{item.profile?.username}</p>
@@ -201,8 +207,11 @@ function Contacts() {
                             {contacts.map(item => (
                                 <div key={item.addressee_id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px', background: t.surface, borderRadius: '12px', border: `1px solid ${t.border}` }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                                        <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: '15px' }}>
-                                            {item.profile?.username?.[0]?.toUpperCase() || '?'}
+                                        <div style={{ width: '38px', height: '38px', borderRadius: '50%', background: 'linear-gradient(135deg, #6366f1, #8b5cf6)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, color: 'white', fontSize: '15px', overflow: 'hidden' }}>
+                                            {item.profile?.avatar_url
+                                                ? <img src={item.profile.avatar_url} alt="" style={{ width:'100%', height:'100%', objectFit:'cover' }} onError={e => { e.target.style.display='none' }} />
+                                                : item.profile?.username?.[0]?.toUpperCase() || '?'
+                                            }
                                         </div>
                                         <div>
                                             <p style={{ margin: 0, fontWeight: 600, fontSize: '14px', color: t.text }}>{item.profile?.username}</p>

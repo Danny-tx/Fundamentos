@@ -75,11 +75,13 @@ function Home() {
     const [showNotifs, setShowNotifs] = useState(false)
     const [notifications, setNotifications] = useState([])
     const [unreadCount, setUnreadCount] = useState(0)
+    const [currentUser, setCurrentUser] = useState(null)
+    const [avatarUrl, setAvatarUrl] = useState(null)
     const bellRef = useRef(null)
 
     useEffect(() => {
         fetchNotifications()
-        // Cerrar al click fuera
+        loadUser()
         const close = (e) => {
             if (bellRef.current && !bellRef.current.contains(e.target)) setShowNotifs(false)
         }
@@ -87,18 +89,25 @@ function Home() {
         return () => document.removeEventListener('click', close)
     }, [])
 
+    const loadUser = async () => {
+        const { data: { user } } = await supabase.auth.getUser()
+        if (!user) return
+        setCurrentUser(user)
+        const { data: profile } = await supabase.from('profiles').select('avatar_url, username').eq('id', user.id).single()
+        if (profile?.avatar_url) setAvatarUrl(profile.avatar_url)
+    }
+
     const fetchNotifications = async () => {
         const { data: { user } } = await supabase.auth.getUser()
 
         const { data: notifData } = await supabase
             .from('notifications')
-            .select('id, title, body, conversation_id, created_at, read')
+            .select('id, title, body, conversation_id, created_at, read, sender_id')
             .eq('read', false)
             .order('created_at', { ascending: false })
             .limit(100)
 
         if (notifData) {
-            // Agrupar por conversation_id, solo el más reciente de cada una
             const seen = new Map()
             for (const n of notifData) {
                 if (!seen.has(n.conversation_id)) {
@@ -107,13 +116,15 @@ function Home() {
                         conversation_id: n.conversation_id,
                         name: n.title || 'Nuevo mensaje',
                         preview: n.body || '',
+                        sender_id: n.sender_id || null,
                     })
                 }
             }
 
-            const grouped = Array.from(seen.values()).map(n => {
-                // Buscar apodo guardado en localStorage para esta conversación
+            // Cargar avatares de los remitentes
+            const grouped = await Promise.all(Array.from(seen.values()).map(async n => {
                 let displayName = n.name
+                let avatar_url = null
                 if (user) {
                     try {
                         const saved = localStorage.getItem(`chat_custom_${user.id}_${n.conversation_id}`)
@@ -123,12 +134,19 @@ function Home() {
                         }
                     } catch (_) {}
                 }
+                // Buscar avatar del remitente
+                if (n.sender_id) {
+                    const { data: senderProfile } = await supabase
+                        .from('profiles').select('avatar_url').eq('id', n.sender_id).single()
+                    avatar_url = senderProfile?.avatar_url || null
+                }
                 return {
                     ...n,
                     name: displayName,
                     preview: n.preview?.startsWith('[foto]') ? '📷 Foto' : n.preview,
+                    avatar_url,
                 }
-            })
+            }))
 
             setNotifications(grouped)
             setUnreadCount(grouped.length)
@@ -224,8 +242,13 @@ function Home() {
                                                     width: '38px', height: '38px', borderRadius: '50%', flexShrink: 0,
                                                     background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
                                                     display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                                    fontWeight: 700, color: 'white', fontSize: '15px'
-                                                }}>{(n.name || '?')[0].toUpperCase()}</div>
+                                                    fontWeight: 700, color: 'white', fontSize: '15px', overflow: 'hidden'
+                                                }}>
+                                                    {n.avatar_url
+                                                        ? <img src={n.avatar_url} alt="" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={e => { e.target.style.display='none' }} />
+                                                        : (n.name || '?')[0].toUpperCase()
+                                                    }
+                                                </div>
                                                 <div style={{ flex: 1, minWidth: 0 }}>
                                                     <div style={{ fontSize: '13px', fontWeight: 600, color: '#f4f4f5', marginBottom: '2px' }}>{n.name}</div>
                                                     <div style={{ fontSize: '12px', color: '#71717a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.preview}</div>
@@ -246,6 +269,25 @@ function Home() {
                     </div>
 
                     <button onClick={handleLogout} style={ui.ghostButton}>Cerrar sesión</button>
+                    {/* Avatar del usuario actual */}
+                    <div onClick={() => navigate('/profile')}
+                        title="Mi perfil"
+                        style={{
+                            width: '38px', height: '38px', borderRadius: '50%',
+                            background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                            display: 'flex', alignItems: 'center', justifyContent: 'center',
+                            fontWeight: 700, color: 'white', fontSize: '15px',
+                            cursor: 'pointer', flexShrink: 0, overflow: 'hidden',
+                            border: '2px solid #2e2e33', transition: 'border-color .15s'
+                        }}
+                        onMouseEnter={e => e.currentTarget.style.borderColor = '#3b82f6'}
+                        onMouseLeave={e => e.currentTarget.style.borderColor = '#2e2e33'}
+                    >
+                        {avatarUrl
+                            ? <img src={avatarUrl} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover' }} onError={() => setAvatarUrl(null)} />
+                            : (currentUser?.user_metadata?.username || currentUser?.email || '?')[0].toUpperCase()
+                        }
+                    </div>
                 </div>
             </div>
 
