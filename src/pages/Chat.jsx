@@ -475,11 +475,20 @@ function Chat() {
         if (msg.content?.startsWith('[foto]')) {
             const url = msg.content.slice(6) // quita exactamente '[foto]'
             return (
-                <img src={url} alt="📷 Foto"
-                    style={{ maxWidth: '220px', maxHeight: '260px', borderRadius: '10px', display: 'block', cursor: 'pointer' }}
-                    onClick={() => window.open(url, '_blank')}
-                    onError={e => { e.target.style.display='none'; e.target.nextSibling.style.display='block' }}
-                />
+                <span style={{ display: 'inline-block' }}>
+                    <img src={url} alt="📷 Foto"
+                        style={{ maxWidth: '220px', maxHeight: '260px', borderRadius: '10px', display: 'block', cursor: 'pointer' }}
+                        onClick={() => window.open(url, '_blank')}
+                        onError={e => {
+                            e.target.style.display = 'none'
+                            const fallback = e.target.parentElement?.querySelector('.foto-fallback')
+                            if (fallback) fallback.style.display = 'block'
+                        }}
+                    />
+                    <span className="foto-fallback" style={{ display: 'none', fontSize: '13px', color: '#71717a', fontStyle: 'italic' }}>
+                        📷 Imagen no disponible
+                    </span>
+                </span>
             )
         }
         return <span>{msg.content}</span>

@@ -113,7 +113,7 @@ export default function CallModal({
         const { SelfieSegmentation } = await import("@mediapipe/selfie_segmentation")
         const seg = new SelfieSegmentation({
           locateFile: (file) => {
-            return `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation@0.1/${file}`
+            return `/${file}`
           }
         })
         seg.setOptions({ modelSelection: 1, selfieMode: true })
