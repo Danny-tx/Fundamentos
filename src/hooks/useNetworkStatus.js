@@ -1,24 +1,49 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 
-// Hook que escucha los eventos del navegador "online" y "offline"
-// y devuelve true si hay conexión, false si no la hay
-function useNetworkStatus() {
-    const [isOnline, setIsOnline] = useState(navigator.onLine)
+const CHECK_URL = "https://www.gstatic.com/generate_204";
+const INTERVAL_MS = 4000;
 
-    useEffect(() => {
-        const goOnline = () => setIsOnline(true)
-        const goOffline = () => setIsOnline(false)
-
-        window.addEventListener('online', goOnline)
-        window.addEventListener('offline', goOffline)
-
-        return () => {
-            window.removeEventListener('online', goOnline)
-            window.removeEventListener('offline', goOffline)
-        }
-    }, [])
-
-    return isOnline
+async function checkRealConnectivity() {
+  try {
+    const res = await fetch(CHECK_URL, {
+      method: "HEAD",
+      cache: "no-store",
+      signal: AbortSignal.timeout(3000),
+    });
+    return res.ok || res.status === 204;
+  } catch {
+    return false;
+  }
 }
 
-export default useNetworkStatus
+function useNetworkStatus() {
+  const [isOnline, setIsOnline] = useState(true);
+  const intervalRef = useRef(null);
+
+  const runCheck = async () => {
+    const online = await checkRealConnectivity();
+    setIsOnline(online);
+  };
+
+  useEffect(() => {
+    runCheck();
+
+    intervalRef.current = setInterval(runCheck, INTERVAL_MS);
+
+    const handleOnline = () => runCheck();
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+
+    return () => {
+      clearInterval(intervalRef.current);
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+    };
+  }, []);
+
+  return isOnline;
+}
+
+export default useNetworkStatus;
