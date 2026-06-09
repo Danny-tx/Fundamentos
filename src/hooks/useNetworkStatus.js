@@ -1,19 +1,24 @@
 import { useState, useEffect, useRef } from "react";
 
-const CHECK_URL = "https://www.gstatic.com/generate_204";
-const INTERVAL_MS = 4000;
+const INTERVAL_MS = 5000;
 
-async function checkRealConnectivity() {
-  try {
-    const res = await fetch(CHECK_URL, {
-      method: "HEAD",
-      cache: "no-store",
-      signal: AbortSignal.timeout(3000),
-    });
-    return res.ok || res.status === 204;
-  } catch {
-    return false;
-  }
+function checkRealConnectivity() {
+  return new Promise((resolve) => {
+    const img = new Image();
+    const timeout = setTimeout(() => {
+      img.src = "";
+      resolve(false);
+    }, 3000);
+    img.onload = () => {
+      clearTimeout(timeout);
+      resolve(true);
+    };
+    img.onerror = () => {
+      clearTimeout(timeout);
+      resolve(false);
+    };
+    img.src = `https://www.google.com/favicon.ico?_=${Date.now()}`;
+  });
 }
 
 function useNetworkStatus() {
@@ -27,19 +32,18 @@ function useNetworkStatus() {
 
   useEffect(() => {
     runCheck();
-
     intervalRef.current = setInterval(runCheck, INTERVAL_MS);
 
-    const handleOnline = () => runCheck();
     const handleOffline = () => setIsOnline(false);
+    const handleOnline = () => runCheck();
 
-    window.addEventListener("online", handleOnline);
     window.addEventListener("offline", handleOffline);
+    window.addEventListener("online", handleOnline);
 
     return () => {
       clearInterval(intervalRef.current);
-      window.removeEventListener("online", handleOnline);
       window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("online", handleOnline);
     };
   }, []);
 
