@@ -154,6 +154,7 @@ function Chat() {
     // callState: null | { mode, isIncoming, offer, otherUserName }
 
     const channelRef = useRef(null)
+    const presenceChannelRef = useRef(null)
     const messagesEndRef = useRef(null)
     const inputRef = useRef(null)
 
@@ -203,6 +204,7 @@ function Chat() {
 
             // Canal de presencia para detectar si el otro usuario está en el chat
             const presenceChannel = supabase.channel(`presence-chat-${id}`)
+            presenceChannelRef.current = presenceChannel
             presenceChannel
                 .on('presence', { event: 'sync' }, () => {
                     const state = presenceChannel.presenceState()
@@ -260,7 +262,7 @@ function Chat() {
             if (channel) supabase.removeChannel(channel)
             if (profileChannel) supabase.removeChannel(profileChannel)
             if (callChannel) supabase.removeChannel(callChannel)
-            supabase.removeChannel(presenceChannel)
+            if (presenceChannelRef.current) supabase.removeChannel(presenceChannelRef.current)
         }
     }, [id])
 
