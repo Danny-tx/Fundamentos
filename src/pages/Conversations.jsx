@@ -108,7 +108,7 @@ function Conversations() {
                                         {isMuted(item.conversation_id) && <span style={{ fontSize: '13px', color: t.muted }}>🔕</span>}
                                     </div>
                                     <p style={{ margin: 0, fontSize: '13px', color: t.muted, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                        {item.last_message || 'Sin mensajes'}
+                                        {item.last_message?.startsWith('[foto]') ? '📷 Foto' : (item.last_message || 'Sin mensajes')}
                                     </p>
                                 </div>
 

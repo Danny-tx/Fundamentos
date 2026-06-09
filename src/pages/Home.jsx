@@ -1,3 +1,4 @@
+import { useState, useEffect, useRef } from "react"
 import { supabase } from "../lib/supabase"
 import { useNavigate } from "react-router-dom"
 
@@ -71,6 +72,74 @@ const ui = {
 
 function Home() {
     const navigate = useNavigate()
+    const [showNotifs, setShowNotifs] = useState(false)
+    const [notifications, setNotifications] = useState([])
+    const [unreadCount, setUnreadCount] = useState(0)
+    const bellRef = useRef(null)
+
+    useEffect(() => {
+        fetchNotifications()
+        // Cerrar al click fuera
+        const close = (e) => {
+            if (bellRef.current && !bellRef.current.contains(e.target)) setShowNotifs(false)
+        }
+        document.addEventListener('click', close)
+        return () => document.removeEventListener('click', close)
+    }, [])
+
+    const fetchNotifications = async () => {
+        const { data: { user } } = await supabase.auth.getUser()
+
+        const { data: notifData } = await supabase
+            .from('notifications')
+            .select('id, title, body, conversation_id, created_at, read')
+            .eq('read', false)
+            .order('created_at', { ascending: false })
+            .limit(100)
+
+        if (notifData) {
+            // Agrupar por conversation_id, solo el más reciente de cada una
+            const seen = new Map()
+            for (const n of notifData) {
+                if (!seen.has(n.conversation_id)) {
+                    seen.set(n.conversation_id, {
+                        id: n.id,
+                        conversation_id: n.conversation_id,
+                        name: n.title || 'Nuevo mensaje',
+                        preview: n.body || '',
+                    })
+                }
+            }
+
+            const grouped = Array.from(seen.values()).map(n => {
+                // Buscar apodo guardado en localStorage para esta conversación
+                let displayName = n.name
+                if (user) {
+                    try {
+                        const saved = localStorage.getItem(`chat_custom_${user.id}_${n.conversation_id}`)
+                        if (saved) {
+                            const { nickname } = JSON.parse(saved)
+                            if (nickname) displayName = nickname
+                        }
+                    } catch (_) {}
+                }
+                return {
+                    ...n,
+                    name: displayName,
+                    preview: n.preview?.startsWith('[foto]') ? '📷 Foto' : n.preview,
+                }
+            })
+
+            setNotifications(grouped)
+            setUnreadCount(grouped.length)
+        }
+    }
+
+    const markAllRead = async () => {
+        await supabase.from('notifications').update({ read: true }).eq('read', false)
+        setNotifications([])
+        setUnreadCount(0)
+    }
 
     const handleLogout = async () => {
         await supabase.auth.signOut()
@@ -79,12 +148,105 @@ function Home() {
 
     return (
         <div style={ui.shell}>
+            <style>{`@import url('https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap');`}</style>
             <div style={ui.header}>
                 <div>
                     <h1 style={{ margin: 0, fontSize: "20px", fontWeight: 700 }}>Velochat</h1>
                     <p style={ui.subtitle}>Centro de navegación</p>
                 </div>
-                <button onClick={handleLogout} style={ui.ghostButton}>Cerrar sesión</button>
+
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                    {/* 🔔 Campana de notificaciones */}
+                    <div ref={bellRef} style={{ position: 'relative' }}>
+                        <button
+                            onClick={() => { setShowNotifs(p => !p); fetchNotifications() }}
+                            style={{
+                                position: 'relative', background: showNotifs ? '#27272a' : '#1c1c1f',
+                                border: '1px solid #2e2e33', borderRadius: '10px',
+                                width: '40px', height: '40px', cursor: 'pointer',
+                                display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                fontSize: '18px', transition: 'background .15s'
+                            }}
+                            title="Notificaciones"
+                        >
+                            🔔
+                            {unreadCount > 0 && (
+                                <span style={{
+                                    position: 'absolute', top: '-6px', right: '-6px',
+                                    background: '#ef4444', color: 'white', borderRadius: '10px',
+                                    fontSize: '11px', fontWeight: 700, minWidth: '18px', height: '18px',
+                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    padding: '0 4px', border: '2px solid #111113'
+                                }}>{unreadCount > 99 ? '99+' : unreadCount}</span>
+                            )}
+                        </button>
+
+                        {showNotifs && (
+                            <div style={{
+                                position: 'absolute', right: 0, top: '48px', width: '300px',
+                                background: '#18181b', border: '1px solid #2e2e33', borderRadius: '14px',
+                                boxShadow: '0 16px 40px rgba(0,0,0,0.5)', zIndex: 200, overflow: 'hidden'
+                            }}>
+                                <div style={{ padding: '14px 16px', borderBottom: '1px solid #2e2e33', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                    <span style={{ fontSize: '14px', fontWeight: 600, color: '#f4f4f5' }}>Notificaciones</span>
+                                    {notifications.length > 0 && (
+                                        <button onClick={markAllRead} style={{
+                                            fontSize: '12px', color: '#3b82f6', cursor: 'pointer',
+                                            background: 'none', border: 'none', fontFamily: 'inherit',
+                                            padding: 0
+                                        }}>✓ Leer todo</button>
+                                    )}
+                                </div>
+                                {notifications.length === 0 ? (
+                                    <div style={{ padding: '28px 16px', textAlign: 'center', color: '#52525b', fontSize: '13px' }}>
+                                        <div style={{ fontSize: '28px', marginBottom: '8px' }}>🎉</div>
+                                        Todo al día, sin mensajes sin leer
+                                    </div>
+                                ) : (
+                                    <div style={{ maxHeight: '320px', overflowY: 'auto' }}>
+                                        {notifications.map(n => (
+                                            <div key={n.id}
+                                                onClick={async () => {
+                                                    // Marcar como leída
+                                                    await supabase.from('notifications').update({ read: true }).eq('id', n.id)
+                                                    navigate(`/chat/${n.conversation_id}`)
+                                                    setShowNotifs(false)
+                                                    fetchNotifications()
+                                                }}
+                                                style={{
+                                                    padding: '12px 16px', cursor: 'pointer', borderBottom: '1px solid #1c1c1f',
+                                                    display: 'flex', gap: '12px', alignItems: 'center', transition: 'background .12s'
+                                                }}
+                                                onMouseEnter={e => e.currentTarget.style.background = '#1c1c1f'}
+                                                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                            >
+                                                <div style={{
+                                                    width: '38px', height: '38px', borderRadius: '50%', flexShrink: 0,
+                                                    background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
+                                                    display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                                    fontWeight: 700, color: 'white', fontSize: '15px'
+                                                }}>{(n.name || '?')[0].toUpperCase()}</div>
+                                                <div style={{ flex: 1, minWidth: 0 }}>
+                                                    <div style={{ fontSize: '13px', fontWeight: 600, color: '#f4f4f5', marginBottom: '2px' }}>{n.name}</div>
+                                                    <div style={{ fontSize: '12px', color: '#71717a', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{n.preview}</div>
+                                                </div>
+                                                {n.unread > 0 && (
+                                                    <span style={{
+                                                        background: '#3b82f6', color: 'white', borderRadius: '10px',
+                                                        fontSize: '11px', fontWeight: 700, minWidth: '20px', height: '20px',
+                                                        display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '0 5px', flexShrink: 0
+                                                    }}>{n.unread}</span>
+                                                )}
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+
+                    <button onClick={handleLogout} style={ui.ghostButton}>Cerrar sesión</button>
+                </div>
             </div>
 
             <main style={ui.card}>
