@@ -149,12 +149,21 @@ function Chat() {
     // Llamadas / Videollamadas
     const [callState, setCallState] = useState(null)
 
+    // Presencia del otro usuario en el chat
+    const [otherUserOnline, setOtherUserOnline] = useState(false)
+    // callState: null | { mode, isIncoming, offer, otherUserName }
+
     const channelRef = useRef(null)
     const messagesEndRef = useRef(null)
     const inputRef = useRef(null)
 
     const { blockUser, unblockUser, isBlocked } = useBlockedUsers()
     const { toggleMute, isMuted } = useMutedConversations()
+
+    // Cargar personalización guardada
+    useEffect(() => {
+        // Esperamos a tener el usuario para usar su ID en la clave
+    }, [id])
 
     useEffect(() => {
         if (!currentUser) return
@@ -182,42 +191,56 @@ function Chat() {
 
             channel = supabase
                 .channel(`chat-${id}`, { config: { broadcast: { self: true } } })
-                // ── Mensaje nuevo ──
                 .on('broadcast', { event: 'new_message' }, async (payload) => {
                     await getMessages()
                     if (payload?.payload?.sender_id && payload.payload.sender_id !== user.id) {
                         triggerNotification(payload.payload.sender_name, payload.payload.preview)
                     }
                 })
-                // ── Mensaje editado ──
-                .on('broadcast', { event: 'message_updated' }, async () => {
-                    await getMessages()
-                })
-                // ── Mensaje eliminado ──
-                .on('broadcast', { event: 'message_deleted' }, async () => {
-                    await getMessages()
-                })
-                // ── Mensaje fijado / desfijado ──
-                .on('broadcast', { event: 'message_pinned' }, async () => {
-                    await getMessages()
-                    await getPinnedMessages()
-                })
                 .subscribe()
 
             channelRef.current = channel
+
+            // Canal de presencia para detectar si el otro usuario está en el chat
+            const presenceChannel = supabase.channel(`presence-chat-${id}`)
+            presenceChannel
+                .on('presence', { event: 'sync' }, () => {
+                    const state = presenceChannel.presenceState()
+                    const others = Object.values(state).flat().filter(p => p.user_id !== user.id)
+                    setOtherUserOnline(others.length > 0)
+                })
+                .on('presence', { event: 'join' }, ({ newPresences }) => {
+                    if (newPresences.some(p => p.user_id !== user.id)) setOtherUserOnline(true)
+                })
+                .on('presence', { event: 'leave' }, () => {
+                    const state = presenceChannel.presenceState()
+                    const others = Object.values(state).flat().filter(p => p.user_id !== user.id)
+                    setOtherUserOnline(others.length > 0)
+                })
+                .subscribe(async (status) => {
+                    if (status === 'SUBSCRIBED') {
+                        await presenceChannel.track({ user_id: user.id })
+                    }
+                })
+
             await supabase.rpc('mark_messages_read', { p_conversation_id: id })
 
+            // ── Escuchar cambios de foto de perfil en tiempo real ──
+            // Usamos el canal de la conversación para re-cargar el avatar del otro usuario
             profileChannel = supabase
                 .channel(`profiles-${id}`)
                 .on('postgres_changes', {
                     event: 'UPDATE', schema: 'public', table: 'profiles'
                 }, (payload) => {
                     if (payload.new?.id && payload.new.id !== user.id) {
+                        // El otro usuario actualizó su perfil
                         if (payload.new.avatar_url) setOtherUserAvatar(payload.new.avatar_url)
                     }
                 })
                 .subscribe()
 
+            // ── Escuchar llamadas entrantes ──
+            // Usamos canal por usuario destino (no por conversación) para evitar colisión con CallModal
             callChannel = supabase
                 .channel(`incoming-call-${user.id}`, { config: { broadcast: { self: false } } })
                 .on('broadcast', { event: 'call_offer' }, ({ payload }) => {
@@ -237,6 +260,7 @@ function Chat() {
             if (channel) supabase.removeChannel(channel)
             if (profileChannel) supabase.removeChannel(profileChannel)
             if (callChannel) supabase.removeChannel(callChannel)
+            supabase.removeChannel(presenceChannel)
         }
     }, [id])
 
@@ -245,6 +269,7 @@ function Chat() {
 
     useEffect(() => {
         if (messages.length === 0) return
+        // requestAnimationFrame garantiza que el DOM ya renderizó los mensajes
         requestAnimationFrame(() => {
             const container = messagesContainerRef.current
             if (!container) return
@@ -290,6 +315,7 @@ function Chat() {
                 const { data: otherId } = await supabase.rpc('get_other_participant', { p_conversation_id: id })
                 if (otherId) {
                     setOtherUserId(otherId)
+                    // Cargar avatar del otro usuario
                     const { data: profile } = await supabase
                         .from('profiles')
                         .select('avatar_url')
@@ -306,6 +332,7 @@ function Chat() {
         if (data) {
             setMessages(data.map(msg => ({
                 id: msg.id,
+                // Guardar contenido original para renderizado, pero limpiar si es foto
                 content: msg.content,
                 displayContent: msg.content?.startsWith('[foto]') ? '📷 Foto' : msg.content,
                 created_at: msg.created_at,
@@ -323,27 +350,21 @@ function Chat() {
         if (data) setPinnedMessages(data)
     }
 
-    /* ── Broadcast helper ── */
-    const broadcast = (event, payload = {}) => {
-        channelRef.current?.send({ type: 'broadcast', event, payload })
-    }
-
     const pinMessage = async (messageId) => {
         await supabase.rpc('pin_message', { p_message_id: messageId })
         await getPinnedMessages()
         await getMessages()
-        broadcast('message_pinned', { message_id: messageId })
     }
 
     const unpinMessage = async (messageId) => {
         await supabase.rpc('unpin_message', { p_message_id: messageId })
         await getPinnedMessages()
         await getMessages()
-        broadcast('message_pinned', { message_id: messageId })
     }
 
-    /* ── Helper: enviar mensaje ── */
+    /* ── Helper: enviar mensaje resolviendo ambigüedad de RPC ── */
     const insertMessage = async (content) => {
+        // Intentar con p_image_url explícito para resolver overload PGRST203
         const { error } = await supabase.rpc('send_message', {
             p_conversation_id: id,
             p_content: content,
@@ -351,6 +372,7 @@ function Chat() {
         })
         if (!error) return null
 
+        // Fallback: insert directo si el RPC no tiene p_image_url
         console.warn('Fallback a insert directo:', error.message)
         const { error: insertError } = await supabase.from('messages').insert({
             conversation_id: id,
@@ -369,11 +391,16 @@ function Chat() {
         const error = await insertMessage(text)
         if (error) { console.error('send_message error:', error); setNewMessage(text); return }
 
-        broadcast('new_message', {
-            sender_id: currentUser.id,
-            sender_name: currentUser.user_metadata?.username || 'alguien',
-            preview: text.slice(0, 60)
-        })
+        if (channelRef.current) {
+            await channelRef.current.send({
+                type: 'broadcast', event: 'new_message',
+                payload: {
+                    sender_id: currentUser.id,
+                    sender_name: currentUser.user_metadata?.username || 'alguien',
+                    preview: text.slice(0, 60)
+                }
+            })
+        }
         await getMessages()
     }
 
@@ -392,11 +419,12 @@ function Chat() {
 
             const error = await insertMessage(`[foto]${photoUrl}`)
             if (!error) {
-                broadcast('new_message', {
-                    sender_id: currentUser.id,
-                    sender_name: currentUser.user_metadata?.username || 'alguien',
-                    preview: '📷 Foto'
-                })
+                if (channelRef.current) {
+                    await channelRef.current.send({
+                        type: 'broadcast', event: 'new_message',
+                        payload: { sender_id: currentUser.id, sender_name: currentUser.user_metadata?.username || 'alguien', preview: '📷 Foto' }
+                    })
+                }
                 await getMessages()
             }
         } catch (err) {
@@ -420,10 +448,7 @@ function Chat() {
     const confirmDelete = (messageId) => setDeleteConfirm(messageId)
     const doDelete = async () => {
         const { error } = await supabase.rpc('delete_message', { p_message_id: deleteConfirm })
-        if (!error) {
-            await getMessages()
-            broadcast('message_deleted', { message_id: deleteConfirm })
-        }
+        if (!error) await getMessages()
         setDeleteConfirm(null)
     }
 
@@ -437,12 +462,7 @@ function Chat() {
     }
     const doEdit = async () => {
         const { error } = await supabase.rpc('edit_message', { p_message_id: editConfirm.id, p_new_content: editConfirm.newContent })
-        if (!error) {
-            setEditingId(null)
-            setEditContent('')
-            await getMessages()
-            broadcast('message_updated', { message_id: editConfirm.id })
-        }
+        if (!error) { setEditingId(null); setEditContent(''); await getMessages() }
         setEditConfirm(null)
     }
 
@@ -460,7 +480,7 @@ function Chat() {
             isIncoming: false,
             offer: null,
             otherUserName: displayName,
-            targetUserId: otherUserId,
+            targetUserId: otherUserId,   // necesario para que CallModal sepa a dónde enviar la oferta
         })
     }
 
@@ -476,11 +496,11 @@ function Chat() {
 
     const displayName = chatNickname || conversation?.name || 'Sin nombre'
 
-    /* ── Renderizar contenido de mensaje ── */
+    /* ── Renderizar contenido de mensaje (texto o foto) ── */
     const renderContent = (msg) => {
         if (msg.is_deleted) return <span style={{ fontStyle: 'italic', color: '#52525b' }}>[Mensaje eliminado]</span>
         if (msg.content?.startsWith('[foto]')) {
-            const url = msg.content.slice(6)
+            const url = msg.content.slice(6) // quita exactamente '[foto]'
             return (
                 <img src={url} alt="📷 Foto"
                     style={{ maxWidth: '220px', maxHeight: '260px', borderRadius: '10px', display: 'block', cursor: 'pointer' }}
@@ -567,6 +587,7 @@ function Chat() {
                 />
             )}
 
+            {/* ── Modal de llamada / videollamada ── */}
             {callState && (
                 <CallModal
                     conversationId={id}
@@ -625,6 +646,7 @@ function Chat() {
                     </button>
                 )}
 
+                {/* Botón llamada de voz */}
                 {conversation?.type === 'direct' && !blocked && (
                     <button className="icon-btn" onClick={() => startOutgoingCall('audio')} title="Llamada de voz"
                         style={{
@@ -634,6 +656,7 @@ function Chat() {
                         }}>📞</button>
                 )}
 
+                {/* Botón videollamada */}
                 {conversation?.type === 'direct' && !blocked && (
                     <button className="icon-btn" onClick={() => startOutgoingCall('video')} title="Videollamada"
                         style={{
@@ -643,12 +666,14 @@ function Chat() {
                         }}>🎥</button>
                 )}
 
+                {/* Botón personalizar */}
                 <button className="icon-btn" onClick={() => setShowCustomize(true)} title="Personalizar chat" style={{
                     background: 'transparent', border: '1px solid #2e2e33', color: '#a1a1aa',
                     borderRadius: '10px', width: '36px', height: '36px', cursor: 'pointer',
                     fontSize: '16px', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'background .15s'
                 }}>🎨</button>
 
+                {/* Menú ⋮ */}
                 <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
                     <button onClick={() => setShowMenu(prev => !prev)} style={{
                         background: showMenu ? '#27272a' : 'transparent', border: '1px solid #2e2e33',
@@ -819,9 +844,15 @@ function Chat() {
                                         </span>
                                         {msg.is_edited && !isDeleted && <span style={{ fontSize: '11px', color: '#3f3f46' }}>· editado</span>}
                                         {isOwn && !isDeleted && (
-                                            <span title={msg.read_count > 0 ? 'Leído' : 'Enviado'}
-                                                style={{ fontSize: '12px', color: msg.read_count > 0 ? '#3b82f6' : '#3f3f46', fontWeight: 600 }}>
-                                                {msg.read_count > 0 ? '✓✓' : '✓'}
+                                            <span
+                                                title={msg.read_count > 0 ? 'Visto' : otherUserOnline ? 'Entregado' : 'Enviado'}
+                                                style={{
+                                                    fontSize: '12px',
+                                                    color: msg.read_count > 0 ? '#3b82f6' : '#71717a',
+                                                    fontWeight: 600,
+                                                    letterSpacing: '-1px'
+                                                }}>
+                                                {msg.read_count > 0 ? '✓✓' : otherUserOnline ? '✓✓' : '✓'}
                                             </span>
                                         )}
                                     </div>
@@ -835,8 +866,10 @@ function Chat() {
             {/* ── Input de mensaje ── */}
             <div className="chat-input-bar" style={{ padding: '8px 10px', borderTop: '1px solid #1c1c1f', background: '#111113' }}>
                 <div style={{ display: 'flex', gap: '8px', alignItems: 'center', position: 'relative' }}>
+                    {/* Input oculto para fotos */}
                     <input type="file" accept="image/*" ref={fileInputRef} onChange={handlePhotoSend} style={{ display: 'none' }} />
 
+                    {/* Botón adjuntar foto */}
                     <button className="icon-btn" onClick={() => !blocked && fileInputRef.current?.click()} disabled={blocked || uploadingPhoto}
                         title="Adjuntar foto" style={{
                             width: '38px', height: '38px', borderRadius: '10px', border: '1px solid #2e2e33',
@@ -846,6 +879,7 @@ function Chat() {
                         {uploadingPhoto ? '⏳' : '📷'}
                     </button>
 
+                    {/* Botón emoji */}
                     <div style={{ position: 'relative' }} onClick={e => e.stopPropagation()}>
                         <button className="icon-btn" onClick={() => !blocked && setShowEmoji(p => !p)} disabled={blocked}
                             title="Emojis" style={{
@@ -865,6 +899,7 @@ function Chat() {
                         )}
                     </div>
 
+                    {/* Campo de texto */}
                     <input
                         ref={inputRef}
                         type="text"
@@ -883,6 +918,7 @@ function Chat() {
                         onBlur={e => e.target.style.borderColor = '#2e2e33'}
                     />
 
+                    {/* Botón enviar */}
                     <button className="send-btn" onClick={sendMessage} disabled={blocked || !newMessage.trim()} style={{
                         padding: '11px 14px', borderRadius: '14px', border: 'none',
                         background: blocked || !newMessage.trim() ? '#1c1c1f' : '#3b82f6',
