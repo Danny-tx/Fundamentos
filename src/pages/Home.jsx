@@ -108,6 +108,12 @@ function Home() {
                         <p style={ui.tileText}>Gestiona solicitudes y contactos aceptados.</p>
                         <button onClick={() => navigate("/contacts")} style={ui.primaryButton}>Ir a contactos</button>
                     </div>
+
+                    <div style={ui.tile}>
+                        <p style={ui.tileTitle}>Panel Admin</p>
+                        <p style={ui.tileText}>Estadísticas y control del sistema (solo admins).</p>
+                        <button onClick={() => navigate("/admin")} style={{ ...ui.primaryButton, background: '#6d28d9' }}>Abrir panel</button>
+                    </div>
                 </div>
             </main>
         </div>
