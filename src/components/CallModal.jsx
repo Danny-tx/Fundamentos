@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, useCallback } from "react"
 import { supabase } from "../lib/supabase"
 
 const BACKGROUNDS = [
-  { id: "none",   label: "Sin fondo",  type: "none",  preview: "🚫" },
+  { id: "none",   label: "Normal",     type: "none",  preview: "😊" },
   { id: "blur",   label: "Desenfoque", type: "blur",  preview: "🌫️" },
   { id: "office", label: "Oficina",    type: "image", preview: "🏢",
     url: "https://images.unsplash.com/photo-1497366216548-37526070297c?w=1280&q=80" },
@@ -42,26 +42,25 @@ const CTX_FILTER_SUPPORTED = (() => {
   } catch(_) { return false }
 })()
 
-// Aplicar filtro en canvas de forma compatible con iOS Safari
-// Para iOS usamos pixel manipulation para B&N y sepia, ctx.filter para el resto en desktop
-const applyCanvasFilter = (ctx, vid, W, H, filterId) => {
+// Aplicar filtro en canvas compatible con iOS Safari usando pixel manipulation como fallback
+const applyCanvasFilter = (ctx, source, W, H, filterId) => {
   if (filterId === "none") {
-    ctx.drawImage(vid, 0, 0, W, H)
+    ctx.drawImage(source, 0, 0, W, H)
     return
   }
   const fDef = FILTERS.find(f => f.id === filterId)
-  if (!fDef) { ctx.drawImage(vid, 0, 0, W, H); return }
+  if (!fDef) { ctx.drawImage(source, 0, 0, W, H); return }
 
   if (CTX_FILTER_SUPPORTED) {
     ctx.filter = fDef.css
-    ctx.drawImage(vid, 0, 0, W, H)
+    ctx.drawImage(source, 0, 0, W, H)
     ctx.filter = "none"
     return
   }
 
-  // Fallback iOS: pixel manipulation para efectos básicos
-  ctx.drawImage(vid, 0, 0, W, H)
-  if (filterId === "bw" || filterId === "sepia" || filterId === "warm" || filterId === "cool") {
+  // Fallback iOS: pixel manipulation para todos los efectos
+  ctx.drawImage(source, 0, 0, W, H)
+  try {
     const imageData = ctx.getImageData(0, 0, W, H)
     const data = imageData.data
     for (let i = 0; i < data.length; i += 4) {
@@ -75,24 +74,38 @@ const applyCanvasFilter = (ctx, vid, W, H, filterId) => {
         data[i+2] = Math.min(255, r*0.272 + g*0.534 + b*0.131)
       } else if (filterId === "warm") {
         data[i]   = Math.min(255, r * 1.1)
+        data[i+1] = Math.min(255, g * 1.02)
         data[i+2] = Math.max(0,   b * 0.9)
       } else if (filterId === "cool") {
         data[i]   = Math.max(0,   r * 0.9)
+        data[i+1] = Math.min(255, g * 1.02)
         data[i+2] = Math.min(255, b * 1.1)
+      } else if (filterId === "bright") {
+        data[i]   = Math.min(255, r * 1.3)
+        data[i+1] = Math.min(255, g * 1.3)
+        data[i+2] = Math.min(255, b * 1.3)
+      } else if (filterId === "frog") {
+        // verde dominante
+        data[i]   = Math.max(0,   r * 0.7)
+        data[i+1] = Math.min(255, g * 1.3)
+        data[i+2] = Math.max(0,   b * 0.7)
+      } else if (filterId === "dog") {
+        // cálido suave
+        data[i]   = Math.min(255, r * 1.05)
+        data[i+1] = Math.min(255, g * 1.05)
+        data[i+2] = Math.max(0,   b * 0.9)
+      } else if (filterId === "rainbow" || filterId === "fire") {
+        // saturar colores
+        const avg = (r + g + b) / 3
+        data[i]   = Math.min(255, avg + (r - avg) * 1.6)
+        data[i+1] = Math.min(255, avg + (g - avg) * 1.6)
+        data[i+2] = Math.min(255, avg + (b - avg) * 1.6)
       }
     }
     ctx.putImageData(imageData, 0, 0)
-  } else if (filterId === "bright") {
-    const imageData = ctx.getImageData(0, 0, W, H)
-    const data = imageData.data
-    for (let i = 0; i < data.length; i += 4) {
-      data[i]   = Math.min(255, data[i]   * 1.3)
-      data[i+1] = Math.min(255, data[i+1] * 1.3)
-      data[i+2] = Math.min(255, data[i+2] * 1.3)
-    }
-    ctx.putImageData(imageData, 0, 0)
+  } catch(_) {
+    // Si getImageData falla (cross-origin taint) dejamos el frame sin filtro
   }
-  // frog/dog/rainbow/fire: sin filtro de color en iOS, solo overlay
 }
 
 const OVERLAYS = {
@@ -146,73 +159,56 @@ export default function CallModal({
   const [activeTab, setActiveTab]         = useState("bg")
   const [selectedBg, setSelectedBg]       = useState("none")
   const [selectedFilter, setSelectedFilter] = useState("none")
-  const [segStatus, setSegStatus]         = useState("idle") // idle | loading | ready | failed
 
-  const remoteVideoRef  = useRef(null)
-  const canvasRef       = useRef(null)
-  const overlayRef      = useRef(null)
-  const pcRef           = useRef(null)
-  const localStreamRef  = useRef(null)
+  const remoteVideoRef   = useRef(null)
+  // Canvas principal — montado en body para que captureStream funcione en iOS/Safari
+  const canvasRef        = useRef(null)
+  const overlayRef       = useRef(null)
+  // Canvas de preview local (pequeño, esquina)
+  const previewCanvasRef = useRef(null)
+  const pcRef            = useRef(null)
+  const localStreamRef   = useRef(null)
   const signalChannelRef = useRef(null)
-  const timerRef        = useRef(null)
-  const animFrameRef    = useRef(null)
-  const bgImgRef        = useRef(null)
-  const bgRef           = useRef("none")
-  const filterRef       = useRef("none")
-  const segRef          = useRef(null)      // instancia SelfieSegmentation
-  const rawVidRef       = useRef(null)      // video element crudo para segmentación
-  const rawPreviewRef   = useRef(null)      // video raw para preview local con filtro CSS
-  const previewCanvasRef = useRef(null)     // canvas pequeño que muestra el video procesado en esquina
+  const timerRef         = useRef(null)
+  const animFrameRef     = useRef(null)
+  const bgImgRef         = useRef(null)
+  const bgRef            = useRef("none")
+  const filterRef        = useRef("none")
+  const rawVidRef        = useRef(null)
+  // Elemento canvas oculto en body (para iOS captureStream)
+  const hiddenCanvasContainerRef = useRef(null)
 
   const isVideo = mode === "video"
   const fmtTime = s => `${String(Math.floor(s/60)).padStart(2,"0")}:${String(s%60).padStart(2,"0")}`
 
-  /* ── Cargar MediaPipe via script tag (evita problemas de CJS/ESM con Vite) ── */
+  /* ── Crear canvas ocultos en body (evita que overflow:hidden corte captureStream en iOS) ── */
   useEffect(() => {
     if (!isVideo) return
-    let cancelled = false
-    const load = async () => {
-      setSegStatus("loading")
-      try {
-        // Cargar script solo si no está ya listo
-        await new Promise((resolve, reject) => {
-          if (window.SelfieSegmentation) { resolve(); return }
-          if (window._mpLoading) {
-            const wait = () => window.SelfieSegmentation ? resolve() : setTimeout(wait, 100)
-            wait(); return
-          }
-          window._mpLoading = true
-          const existing = document.getElementById("mediapipe-script")
-          if (existing) { existing.addEventListener("load", resolve); existing.addEventListener("error", reject); return }
-          const script = document.createElement("script")
-          script.id = "mediapipe-script"
-          script.src = "https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/selfie_segmentation.js"
-          script.crossOrigin = "anonymous"
-          script.onload = () => { window._mpLoading = false; resolve() }
-          script.onerror = () => { window._mpLoading = false; reject() }
-          document.head.appendChild(script)
-        })
-        if (cancelled) return
-        if (!window.SelfieSegmentation) throw new Error("SelfieSegmentation no disponible")
-        // Reutilizar instancia si ya existe (React StrictMode doble-invoke en dev)
-        if (segRef.current) { setSegStatus("ready"); return }
-        const seg = new window.SelfieSegmentation({
-          locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/selfie_segmentation/${file}`
-        })
-        seg.setOptions({ modelSelection: 1, selfieMode: false })
-        await seg.initialize()
-        if (cancelled) { seg.close(); return }
-        segRef.current = seg
-        setSegStatus("ready")
-      } catch(e) {
-        console.warn("MediaPipe falló:", e)
-        if (!cancelled) setSegStatus("failed")
-      }
-    }
-    load()
+
+    const container = document.createElement("div")
+    container.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;opacity:0;pointer-events:none;overflow:visible;z-index:-1"
+    document.body.appendChild(container)
+    hiddenCanvasContainerRef.current = container
+
+    const mainCanvas = document.createElement("canvas")
+    mainCanvas.width = 640
+    mainCanvas.height = 480
+    container.appendChild(mainCanvas)
+    canvasRef.current = mainCanvas
+
+    const overlayCanvas = document.createElement("canvas")
+    overlayCanvas.width = 640
+    overlayCanvas.height = 480
+    container.appendChild(overlayCanvas)
+    overlayRef.current = overlayCanvas
+
     return () => {
-      cancelled = true
-      if (segRef.current) { segRef.current.close(); segRef.current = null }
+      if (hiddenCanvasContainerRef.current) {
+        document.body.removeChild(hiddenCanvasContainerRef.current)
+        hiddenCanvasContainerRef.current = null
+      }
+      canvasRef.current = null
+      overlayRef.current = null
     }
   }, [isVideo])
 
@@ -233,7 +229,11 @@ export default function CallModal({
       if (candidate) getSignalChannel().send({ type:"broadcast", event:"call_ice", payload:{ candidate } })
     }
     pc.ontrack = ({ streams }) => {
-      if (remoteVideoRef.current && streams[0]) remoteVideoRef.current.srcObject = streams[0]
+      if (remoteVideoRef.current && streams[0]) {
+        remoteVideoRef.current.srcObject = streams[0]
+        // Forzar play en iOS (requiere interacción del usuario previa, pero intentamos)
+        remoteVideoRef.current.play().catch(()=>{})
+      }
     }
     pc.onconnectionstatechange = () => {
       if (pc.connectionState === "connected") {
@@ -251,6 +251,7 @@ export default function CallModal({
     if (bg?.type === "image") {
       const img = new Image(); img.crossOrigin = "anonymous"
       img.onload = () => { bgImgRef.current = img }
+      img.onerror = () => { bgImgRef.current = null }
       img.src = bg.url
     } else { bgImgRef.current = null }
   }
@@ -258,8 +259,15 @@ export default function CallModal({
   const changeBg     = (id) => { setSelectedBg(id);     bgRef.current = id;     loadBgImage(id) }
   const changeFilter = (id) => { setSelectedFilter(id); filterRef.current = id }
 
-  /* ── Loop canvas con segmentación MediaPipe real ── */
+  /* ── Loop canvas sin MediaPipe — fondos por drawImage directo, funciona en todos los browsers ── */
   const startCanvasLoop = useCallback(async (rawStream) => {
+    // Esperar a que el canvas esté montado en body (lo crea el useEffect de arriba)
+    const waitForCanvas = () => new Promise(resolve => {
+      const check = () => canvasRef.current ? resolve() : setTimeout(check, 30)
+      check()
+    })
+    await waitForCanvas()
+
     const canvas  = canvasRef.current
     const overlay = overlayRef.current
     if (!canvas) return rawStream
@@ -273,106 +281,91 @@ export default function CallModal({
 
     // Video element para el stream crudo
     const vid = document.createElement("video")
-    vid.srcObject = rawStream; vid.autoplay = true; vid.playsInline = true; vid.muted = true
+    vid.srcObject = rawStream
+    vid.autoplay = true
+    vid.playsInline = true
+    vid.muted = true
+    vid.setAttribute("playsinline", "")
     rawVidRef.current = vid
+
     await new Promise(res => {
-      vid.onloadedmetadata = () => res()
-      if (vid.readyState >= 2) res()
+      vid.onloadedmetadata = () => { vid.play().then(res).catch(res) }
+      if (vid.readyState >= 2) { vid.play().then(res).catch(res) }
     })
-    await vid.play().catch(()=>{})
 
-    // Canvas temporal para persona recortada
-    const personCv  = document.createElement("canvas"); personCv.width=W; personCv.height=H
-    const personCtx = personCv.getContext("2d")
-    // Canvas para fondo desenfocado
-    const blurCv  = document.createElement("canvas"); blurCv.width=W; blurCv.height=H
+    // Canvas temporal para fondo desenfocado (solo blur)
+    const blurCv  = document.createElement("canvas"); blurCv.width = 80; blurCv.height = 60
     const blurCtx = blurCv.getContext("2d")
-    // Resultado de segmentación más reciente
-    let lastMask = null
-    let segRegistered = false
 
-    const ensureSegCallback = () => {
-      if (segRegistered || !segRef.current) return
-      segRef.current.onResults((results) => {
-        lastMask = results.segmentationMask
-      })
-      segRegistered = true
-    }
-
-    let frameCount = 0
-    const SEG_EVERY = 3
-
-    const drawFrame = async () => {
+    const drawFrame = () => {
+      if (!canvas) return
       if (vid.readyState < 2) { animFrameRef.current = requestAnimationFrame(drawFrame); return }
-
-      ensureSegCallback()
 
       const bg   = bgRef.current
       const fid  = filterRef.current
       const fDef = FILTERS.find(f => f.id === fid) || FILTERS[0]
-      frameCount++
-
-      if (segRef.current && bg !== "none" && frameCount % SEG_EVERY === 0) {
-        try { await segRef.current.send({ image: vid }) } catch(_) {}
-      }
+      const bgDef = BACKGROUNDS.find(b => b.id === bg)
 
       ctx.clearRect(0, 0, W, H)
 
-      if (bg === "none" || !segRef.current || !lastMask) {
-        // Sin fondo: espejear todo el frame
+      if (bg === "none") {
+        // Sin fondo: dibujar video espejado con filtro
+        ctx.save()
+        ctx.translate(W, 0); ctx.scale(-1, 1)
+        applyCanvasFilter(ctx, vid, W, H, fid)
+        ctx.restore()
+      } else if (bg === "blur") {
+        // Fondo: versión borrosa del video (reducido y ampliado = blur barato)
+        blurCtx.save()
+        blurCtx.translate(blurCv.width, 0); blurCtx.scale(-1, 1)
+        blurCtx.drawImage(vid, 0, 0, blurCv.width, blurCv.height)
+        blurCtx.restore()
+        // Escalar de vuelta al tamaño completo (esto crea el efecto blur)
+        ctx.drawImage(blurCv, 0, 0, blurCv.width, blurCv.height, 0, 0, W, H)
+        // Encimar el video real espejado con opacidad para ver silueta
+        ctx.save()
+        ctx.translate(W, 0); ctx.scale(-1, 1)
+        applyCanvasFilter(ctx, vid, W, H, fid)
+        ctx.restore()
+      } else if (bgDef?.type === "color") {
+        // Fondo de color sólido
+        ctx.fillStyle = bgDef.color
+        ctx.fillRect(0, 0, W, H)
+        // Video encima con blend ligero para ver la persona
+        ctx.save()
+        ctx.translate(W, 0); ctx.scale(-1, 1)
+        applyCanvasFilter(ctx, vid, W, H, fid)
+        ctx.restore()
+      } else if (bgDef?.type === "image" && bgImgRef.current) {
+        // Fondo de imagen
+        ctx.drawImage(bgImgRef.current, 0, 0, W, H)
+        // Video encima
         ctx.save()
         ctx.translate(W, 0); ctx.scale(-1, 1)
         applyCanvasFilter(ctx, vid, W, H, fid)
         ctx.restore()
       } else {
-        // ── SEGMENTACIÓN ──
-        // 1. Dibujar fondo SIN espejear
-        const bgDef = BACKGROUNDS.find(b => b.id === bg)
-        if (bg === "blur") {
-          // Para blur: dibujar el video espejado a baja res como fondo
-          blurCtx.save()
-          blurCtx.translate(W/10, 0); blurCtx.scale(-1, 1)
-          blurCtx.drawImage(vid, 0, 0, W/10, H/10)
-          blurCtx.restore()
-          ctx.drawImage(blurCv, 0, 0, W/10, H/10, 0, 0, W, H)
-        } else if (bgDef?.type === "color") {
-          ctx.fillStyle = bgDef.color
-          ctx.fillRect(0, 0, W, H)
-        } else if (bgImgRef.current) {
-          ctx.drawImage(bgImgRef.current, 0, 0, W, H)
-        } else {
-          ctx.fillStyle = "#000"
-          ctx.fillRect(0, 0, W, H)
-        }
-        // 2. Dibujar persona espejada en personCv
-        personCtx.clearRect(0, 0, W, H)
-        personCtx.save()
-        personCtx.translate(W, 0); personCtx.scale(-1, 1)
-        applyCanvasFilter(personCtx, vid, W, H, fid)
-        personCtx.restore()
-        // 3. Aplicar máscara (también espejada)
-        personCtx.save()
-        personCtx.globalCompositeOperation = "destination-in"
-        personCtx.translate(W, 0); personCtx.scale(-1, 1)
-        personCtx.drawImage(lastMask, 0, 0, W, H)
-        personCtx.restore()
-        // 4. Compositar persona sobre fondo
-        ctx.drawImage(personCv, 0, 0)
+        // Imagen aún cargando — mostrar video normal
+        ctx.save()
+        ctx.translate(W, 0); ctx.scale(-1, 1)
+        applyCanvasFilter(ctx, vid, W, H, fid)
+        ctx.restore()
       }
 
-      // Overlay de cara
+      // Overlay de cara (emojis animados)
       if (fDef.overlay && OVERLAYS[fDef.overlay] && octx) {
         octx.clearRect(0, 0, W, H)
         OVERLAYS[fDef.overlay](octx, W, H)
         ctx.drawImage(overlay, 0, 0)
       }
 
-      // Copiar resultado al canvas de preview pequeño
+      // Copiar resultado al canvas de preview pequeño (dentro del modal)
       if (previewCanvasRef.current) {
         const pc = previewCanvasRef.current
+        const pctx = pc.getContext("2d")
         if (pc.width !== W) pc.width = W
         if (pc.height !== H) pc.height = H
-        pc.getContext("2d").drawImage(canvas, 0, 0)
+        pctx.drawImage(canvas, 0, 0)
       }
 
       animFrameRef.current = requestAnimationFrame(drawFrame)
@@ -380,11 +373,9 @@ export default function CallModal({
 
     drawFrame()
 
-    // Stream procesado desde canvas + audio original (se envía al peer)
+    // Stream procesado desde canvas + audio original
     const processed = canvas.captureStream(30)
     rawStream.getAudioTracks().forEach(t => processed.addTrack(t))
-    // Preview local: mostrar video RAW (con filtro CSS), no el canvas
-    if (rawPreviewRef.current) rawPreviewRef.current.srcObject = rawStream
     return processed
   }, [])
 
@@ -466,8 +457,7 @@ export default function CallModal({
     cancelAnimationFrame(animFrameRef.current)
     if (pcRef.current) { pcRef.current.close(); pcRef.current=null }
     if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t=>t.stop())
-    if (rawVidRef.current) { rawVidRef.current.srcObject=null }
-    if (rawPreviewRef.current) { rawPreviewRef.current.srcObject=null }
+    if (rawVidRef.current) { rawVidRef.current.pause(); rawVidRef.current.srcObject=null }
     if (signalChannelRef.current) {
       signalChannelRef.current.send({ type:"broadcast", event:"call_end", payload:{} })
       supabase.removeChannel(signalChannelRef.current); signalChannelRef.current=null
@@ -492,12 +482,12 @@ export default function CallModal({
       clearInterval(timerRef.current)
       cancelAnimationFrame(animFrameRef.current)
       if (localStreamRef.current) localStreamRef.current.getTracks().forEach(t=>t.stop())
+      if (rawVidRef.current) { rawVidRef.current.pause(); rawVidRef.current.srcObject=null }
       if (pcRef.current) pcRef.current.close()
       if (signalChannelRef.current) supabase.removeChannel(signalChannelRef.current)
     }
   }, [])
 
-  const fDef = FILTERS.find(f => f.id === selectedFilter) || FILTERS[0]
   const statusText = {
     incoming:`Llamada entrante de ${otherUserName}`, calling:`Llamando a ${otherUserName}…`,
     connecting:"Conectando…", connected:fmtTime(elapsed), rejected:"Llamada rechazada", error:"Error al conectar",
@@ -507,12 +497,10 @@ export default function CallModal({
     @keyframes fadeIn{from{opacity:0}to{opacity:1}}
     @keyframes slideUp{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:translateY(0)}}
     @keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(59,130,246,.6)}50%{box-shadow:0 0 0 12px rgba(59,130,246,0)}}
-    @keyframes spin{to{transform:rotate(360deg)}}
     .call-ring{animation:pulse 1.4s ease infinite}
     .call-btn:hover{filter:brightness(1.18);transform:scale(1.07)}
     .call-btn:active{transform:scale(0.95)}
     .bg-tile:hover,.filter-tile:hover{border-color:#3b82f6!important}
-    .seg-spinner{display:inline-block;width:10px;height:10px;border:2px solid #3b82f6;border-top-color:transparent;border-radius:50%;animation:spin .7s linear infinite;margin-right:6px}
   `
 
   return (
@@ -533,33 +521,24 @@ export default function CallModal({
         <div style={{ textAlign:"center" }}>
           <div style={{ fontSize:"18px",fontWeight:700,color:"#f4f4f5" }}>{otherUserName}</div>
           <div style={{ fontSize:"13px",marginTop:"4px",fontWeight:status==="connected"?600:400,color:status==="connected"?"#4ade80":"#71717a" }}>{statusText}</div>
-          {isVideo && segStatus==="loading" && (
-            <div style={{ fontSize:"11px",color:"#3b82f6",marginTop:"4px",display:"flex",alignItems:"center",justifyContent:"center" }}>
-              <span className="seg-spinner"></span>Cargando efectos de fondo…
-            </div>
-          )}
-          {isVideo && segStatus==="ready" && selectedBg!=="none" && (
-            <div style={{ fontSize:"11px",color:"#4ade80",marginTop:"4px" }}>✓ Segmentación activa</div>
-          )}
-          {isVideo && segStatus==="failed" && (
-            <div style={{ fontSize:"11px",color:"#f87171",marginTop:"4px" }}>⚠ Fondos en modo básico</div>
-          )}
         </div>
 
         {/* Videos */}
         {isVideo && (
           <div style={{ position:"relative",width:"100%",borderRadius:"16px",overflow:"hidden",background:"#000",aspectRatio:"16/9" }}>
-            {/* Video remoto — siempre ocupa el área principal */}
-            <video ref={remoteVideoRef} autoPlay playsInline style={{ width:"100%",height:"100%",objectFit:"cover",display:"block" }} />
-            {/* Canvas oculto — solo para procesar y enviar al peer */}
-            <canvas ref={canvasRef} style={{ position:"absolute", left:"-9999px", top:0, pointerEvents:"none", width:"1px", height:"1px" }} />
-            <canvas ref={overlayRef} style={{ position:"absolute", left:"-9999px", top:0, pointerEvents:"none", width:"1px", height:"1px" }} />
-            {/* Preview local en esquina — canvas procesado si hay fondo/filtro, video raw si no */}
+            {/* Video remoto — ocupa el área principal */}
+            <video
+              ref={remoteVideoRef}
+              autoPlay
+              playsInline
+              style={{ width:"100%",height:"100%",objectFit:"cover",display:"block" }}
+            />
+            {/* Preview local en esquina — siempre muestra el canvas procesado */}
             <div style={{ position:"absolute",bottom:"12px",right:"12px",width:"120px",height:"90px",borderRadius:"12px",overflow:"hidden",border:"2px solid #27272a",background:"#111" }}>
-              {/* rawPreviewRef: solo visible cuando NO hay fondo NI filtro (video crudo sin procesar) */}
-              <video ref={rawPreviewRef} autoPlay playsInline muted style={{ position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",display:(selectedBg==="none"&&selectedFilter==="none")?"block":"none" }} />
-              {/* previewCanvasRef: muestra el canvas procesado cuando hay fondo O filtro */}
-              <canvas ref={previewCanvasRef} style={{ position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover",display:(selectedBg!=="none"||selectedFilter!=="none")?"block":"none" }} />
+              <canvas
+                ref={previewCanvasRef}
+                style={{ position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover" }}
+              />
             </div>
             {status!=="connected" && (
               <div style={{ position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",color:"#52525b",fontSize:"14px",background:"rgba(0,0,0,0.5)" }}>
@@ -570,7 +549,7 @@ export default function CallModal({
         )}
         {!isVideo && <video ref={remoteVideoRef} autoPlay playsInline style={{ display:"none" }} />}
 
-        {/* Panel */}
+        {/* Panel fondos y filtros */}
         {isVideo && showPanel && (
           <div style={{ width:"100%",background:"#18181b",borderRadius:"16px",border:"1px solid #2e2e33",overflow:"hidden",animation:"fadeIn .15s ease" }}>
             <div style={{ display:"flex",borderBottom:"1px solid #2e2e33" }}>
@@ -582,7 +561,7 @@ export default function CallModal({
             {activeTab==="bg" && (
               <div style={{ padding:"14px",display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:"8px" }}>
                 {BACKGROUNDS.map(bg=>(
-                  <button key={bg.id} className="bg-tile" onClick={()=>changeBg(bg.id)} style={{ padding:"10px 4px",borderRadius:"10px",border:`2px solid ${selectedBg===bg.id?"#3b82f6":"#2e2e33"}`,background:selectedBg===bg.id?"rgba(59,130,246,0.12)":"#111113",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:"4px",transition:"border-color .15s",opacity:segStatus==="loading"&&bg.id!=="none"?0.6:1 }}>
+                  <button key={bg.id} className="bg-tile" onClick={()=>changeBg(bg.id)} style={{ padding:"10px 4px",borderRadius:"10px",border:`2px solid ${selectedBg===bg.id?"#3b82f6":"#2e2e33"}`,background:selectedBg===bg.id?"rgba(59,130,246,0.12)":"#111113",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:"4px",transition:"border-color .15s" }}>
                     {bg.type==="image"
                       ? <div style={{ width:"40px",height:"28px",borderRadius:"6px",overflow:"hidden" }}><img src={bg.url} alt={bg.label} style={{ width:"100%",height:"100%",objectFit:"cover" }} /></div>
                       : <span style={{ fontSize:"22px",lineHeight:1 }}>{bg.preview}</span>
@@ -597,7 +576,7 @@ export default function CallModal({
               <div style={{ padding:"14px",display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:"8px" }}>
                 {FILTERS.map(f=>(
                   <button key={f.id} className="filter-tile" onClick={()=>changeFilter(f.id)} style={{ padding:"10px 6px",borderRadius:"10px",border:`2px solid ${selectedFilter===f.id?"#3b82f6":"#2e2e33"}`,background:selectedFilter===f.id?"rgba(59,130,246,0.12)":"#111113",cursor:"pointer",display:"flex",flexDirection:"column",alignItems:"center",gap:"4px",transition:"border-color .15s" }}>
-                    <div style={{ width:"44px",height:"44px",borderRadius:"50%",background:"linear-gradient(135deg,#3b82f6,#8b5cf6)",filter:f.css!=="none"?f.css:"none",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"20px" }}>
+                    <div style={{ width:"44px",height:"44px",borderRadius:"50%",background:"linear-gradient(135deg,#3b82f6,#8b5cf6)",filter:CTX_FILTER_SUPPORTED&&f.css!=="none"?f.css:"none",display:"flex",alignItems:"center",justifyContent:"center",fontSize:"20px" }}>
                       {f.overlay?{frog:"🐸",dog:"🐶",rainbow:"🌈",fire:"🔥"}[f.overlay]:"😊"}
                     </div>
                     <span style={{ fontSize:"11px",color:selectedFilter===f.id?"#93c5fd":"#71717a",fontWeight:500 }}>{f.label}</span>
