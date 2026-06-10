@@ -464,7 +464,17 @@ function Chat() {
     }
     const doEdit = async () => {
         const { error } = await supabase.rpc('edit_message', { p_message_id: editConfirm.id, p_new_content: editConfirm.newContent })
-        if (!error) { setEditingId(null); setEditContent(''); await getMessages() }
+        if (!error) {
+            setEditingId(null)
+            setEditContent('')
+            await getMessages()
+            if (channelRef.current) {
+                await channelRef.current.send({
+                    type: 'broadcast', event: 'new_message',
+                    payload: { sender_id: currentUser.id }
+                })
+            }
+        }
         setEditConfirm(null)
     }
 
@@ -928,7 +938,7 @@ function Chat() {
                         cursor: blocked || !newMessage.trim() ? 'not-allowed' : 'pointer',
                         fontSize: '14px', fontFamily: 'inherit', fontWeight: 600,
                         transition: 'background .15s, color .15s', flexShrink: 0
-                    }}>Enviar</button>
+                    }}>Enviar </button>
                 </div>
             </div>
         </div>
